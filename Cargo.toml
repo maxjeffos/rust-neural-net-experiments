@@ -1,0 +1,5 @@
+[workspace]
+members = [
+  "test1-autodiff",
+  "test2-mlp-classifier"
+]
