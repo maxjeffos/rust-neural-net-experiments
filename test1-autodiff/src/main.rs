@@ -17,7 +17,7 @@ fn do_op_dual(f: impl Fn(FT<f64>) -> FT<f64>, x: f64) {
     let ft_x = FT::cst(x);
     let y = f(ft_x);
     println!("f({}) = {}", x, y);
-    
+
     let derivative_at_x = diff(&f, x);
     println!("f'({}) = {}", x, derivative_at_x);
 }

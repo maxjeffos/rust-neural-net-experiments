@@ -1,5 +1,5 @@
-use std::fmt;
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use ndarray::*;
@@ -9,9 +9,7 @@ struct MultilayerPerceptron {
     bias: f64,
 }
 
-impl MultilayerPerceptron {
-
-}
+impl MultilayerPerceptron {}
 
 struct MLPArchitecture {
     input_size: usize,
@@ -71,7 +69,6 @@ impl fmt::Display for Color {
     }
 }
 
-
 /// Generates a bunch of (x, y) points which map to a color.
 /// Generates n blue points and n orange points.
 /// The points are randomly generated but only in the (+, +) and (-, -) quadrants i.e quadrants 1 and 3.
@@ -97,13 +94,18 @@ fn generate_fake_training_data(n: usize) -> HashMap<Point, Color> {
         training_data.insert(p, Color::orange);
     }
 
-    training_data 
+    training_data
 }
-
 
 fn main() {
     let fake_training_data = generate_fake_training_data(100);
-    
+
+    // let mut mlp = MultilayerPerceptron::create_builder()
+    //     .input_size(2)
+    //     .hidden_layers(vec![2, 2])
+    //     .output_size(2)
+    //     .build();
+
     // print each item in fake_training_data
     for (p, c) in fake_training_data {
         println!("{} -> {}", p, c);
