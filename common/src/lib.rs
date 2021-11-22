@@ -1,6 +1,7 @@
 use rand;
 
 pub mod point;
+pub mod scalar_valued_multivariable_point;
 
 pub enum DistributionType {
     Uniform,
@@ -26,3 +27,53 @@ pub enum Distribution {
 //         DistributionType::Gaussian => unimplemented!(),
 //     }
 // }
+
+#[derive(Debug, PartialEq)]
+pub enum DotProductError {
+    DimensionsDoNotMatch,
+    DimensionIsZero,
+}
+
+pub fn dot_product(v1: &[f64], v2: &[f64]) -> Result<f64, DotProductError> {
+    if v1.len() != v2.len() {
+        println!("dimention of v1: {}", v1.len());
+        println!("dimention of v2: {}", v2.len());
+        println!("v1 and v2 must have the same dimension");
+        return Err(DotProductError::DimensionsDoNotMatch);
+    }
+
+    if v1.len() == 0 {
+        println!("v1 and v2 must have a non-zero dimension");
+        return Err(DotProductError::DimensionIsZero);
+    }
+
+    let mut sum = 0_f64;
+
+    for i in 0..v1.len() {
+        sum += v1[i] * v2[i];
+    }
+
+    Ok(sum)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dot_product_works() {
+        let v1 = vec![0.0, 1.0, 3.0];
+        let v3 = vec![7.0, 11.0, 13.0];
+        let dp = dot_product(&v1, &v3).unwrap();
+        assert_eq!(dp, 50.0);
+    }
+
+    #[test]
+    fn dot_returns_err_if_dimentions_are_zero() {
+        let v1 = vec![];
+        let v3 = vec![];
+        let dp = dot_product(&v1, &v3);
+        let dp_err = dp.err();
+        assert_eq!(dp_err, Some(DotProductError::DimensionIsZero));
+    }
+}
