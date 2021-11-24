@@ -3,5 +3,6 @@ members = [
   "test1-autodiff",
   "test2-mlp-classifier",
   "test3-simple-linear-regression",
+  "test4-multivariable-regression",
   "common"
 ]

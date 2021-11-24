@@ -32,6 +32,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -187,6 +196,16 @@ name = "test3-simple-linear-regression"
 version = "0.1.0"
 dependencies = [
  "common",
+ "rand",
+ "rand_distr",
+]
+
+[[package]]
+name = "test4-multivariable-regression"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "float-cmp",
  "rand",
  "rand_distr",
 ]
