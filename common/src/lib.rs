@@ -1,5 +1,6 @@
 use rand;
 
+pub mod matrix;
 pub mod point;
 pub mod scalar_valued_multivariable_point;
 
