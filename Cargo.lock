@@ -211,6 +211,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "test5-playing-with-matrix-ideas"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "test6-nn"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "float-cmp",
+ "rand",
+ "rand_distr",
+]
+
+[[package]]
 name = "wasi"
 version = "0.10.2+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
