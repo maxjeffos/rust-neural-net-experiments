@@ -4,63 +4,71 @@ use rand_distr::Normal;
 use std::fmt;
 
 #[macro_export]
-macro_rules! column_vector {
+macro_rules! column_vector_matrix {
     ($($y:expr),+) => (
         Matrix::new_column_vector(&[$($y),+])
     );
 }
 
 #[macro_export]
-macro_rules! row_matrix {
+macro_rules! column_vector {
     ($($y:expr),+) => (
-        Matrix::new_row_vector(&[$($y),+])
+        ColumnVector::new(&[$($y),+])
     );
 }
 
 #[derive(Debug, Clone)]
 pub struct Matrix {
-    pub rows: usize,
-    pub columns: usize,
+    num_rows: usize,
+    num_columns: usize,
     pub data: Vec<f64>,
 }
 
 impl Matrix {
-    pub fn empty_with_num_rows(rows: usize) -> Matrix {
+    pub fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    pub fn num_columns(&self) -> usize {
+        self.num_columns
+    }
+
+    pub fn empty_with_num_rows(num_rows: usize) -> Matrix {
         Matrix {
-            rows: rows,
-            columns: 0,
+            num_rows,
+            num_columns: 0,
             data: vec![],
         }
     }
 
-    pub fn empty_with_num_cols(rows: usize) -> Matrix {
+    pub fn empty_with_num_cols(num_columns: usize) -> Matrix {
         Matrix {
-            rows: 0,
-            columns: rows,
+            num_rows: 0,
+            num_columns,
             data: vec![],
         }
     }
 
-    pub fn init(rows: usize, columns: usize, init_value: f64) -> Matrix {
+    pub fn init(num_rows: usize, num_columns: usize, init_value: f64) -> Matrix {
         Matrix {
-            rows,
-            columns,
-            data: vec![init_value; rows * columns],
+            num_rows: num_rows,
+            num_columns: num_columns,
+            data: vec![init_value; num_rows * num_columns],
         }
     }
 
     pub fn new_column_vector(items: &[f64]) -> Self {
         Self {
-            rows: items.len(),
-            columns: 1,
+            num_rows: items.len(),
+            num_columns: 1,
             data: items.to_vec(),
         }
     }
 
     pub fn new_row_vector(items: &[f64]) -> Self {
         Self {
-            rows: 1,
-            columns: items.len(),
+            num_rows: 1,
+            num_columns: items.len(),
             data: items.to_vec(),
         }
     }
@@ -73,27 +81,27 @@ impl Matrix {
         m
     }
 
-    pub fn new_zero_matrix(rows: usize, columns: usize) -> Self {
+    pub fn new_zero_matrix(num_rows: usize, num_columns: usize) -> Self {
         Self {
-            rows,
-            columns,
-            data: vec![0.0; rows * columns],
+            num_rows,
+            num_columns,
+            data: vec![0.0; num_rows * num_columns],
         }
     }
 
     pub fn new_matrix_with_random_values_from_normal_distribution(
-        rows: usize,
-        columns: usize,
+        num_rows: usize,
+        num_columns: usize,
         mean: f64,
         std_dev: f64,
     ) -> Self {
-        let mut matrix = Self::new_zero_matrix(rows, columns);
+        let mut matrix = Self::new_zero_matrix(num_rows, num_columns);
 
         let mut rng = rand::thread_rng();
         let normal = Normal::new(mean, std_dev).unwrap();
 
-        for m in 0..rows {
-            for n in 0..columns {
+        for m in 0..num_rows {
+            for n in 0..num_columns {
                 let x = normal.sample(&mut rng);
                 matrix.set(m, n, x);
             }
@@ -119,9 +127,9 @@ impl Matrix {
             panic!("columns must have the same length");
         }
 
-        let rows = columns_lengths[0];
+        let num_rows = columns_lengths[0];
 
-        let mut matrix = Matrix::empty_with_num_rows(rows);
+        let mut matrix = Matrix::empty_with_num_rows(num_rows);
         for c in columns {
             matrix.push_column(&c);
         }
@@ -130,11 +138,11 @@ impl Matrix {
     }
 
     pub fn get(&self, row: usize, column: usize) -> f64 {
-        self.data[row * self.columns + column]
+        self.data[row * self.num_columns + column]
     }
 
     pub fn set(&mut self, row: usize, column: usize, value: f64) {
-        self.data[row * self.columns + column] = value;
+        self.data[row * self.num_columns + column] = value;
     }
 
     pub fn push_row(&mut self, row: &[f64]) {
@@ -144,23 +152,23 @@ impl Matrix {
     pub fn push_column(&mut self, column: &[f64]) {
         let mut i = 0_usize;
         for item in column {
-            i += self.columns;
+            i += self.num_columns;
             self.data.insert(i, *item);
             i += 1
         }
 
-        self.columns += 1;
+        self.num_columns += 1;
     }
 
     pub fn transpose(&self) -> Self {
-        if self.columns == 1 && self.rows > 0 {
+        if self.num_columns == 1 && self.num_rows > 0 {
             Self::new_row_vector(&self.data)
-        } else if self.rows == 1 && self.columns > 0 {
+        } else if self.num_rows == 1 && self.num_columns > 0 {
             Self::new_column_vector(&self.data)
         } else {
-            let mut transposed = Self::new_zero_matrix(self.columns, self.rows);
-            for i in 0..self.rows {
-                for j in 0..self.columns {
+            let mut transposed = Self::new_zero_matrix(self.num_columns, self.num_rows);
+            for i in 0..self.num_rows {
+                for j in 0..self.num_columns {
                     transposed.set(j, i, self.get(i, j));
                 }
             }
@@ -171,8 +179,8 @@ impl Matrix {
 
     pub fn multiply_by_scalar(&self, scalar: f64) -> Self {
         Self {
-            rows: self.rows,
-            columns: self.columns,
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
             data: self.data.iter().map(|x| x * scalar).collect(),
         }
     }
@@ -186,8 +194,8 @@ impl Matrix {
 
     pub fn divide_by_scalar(&self, scalar: f64) -> Self {
         Self {
-            rows: self.rows,
-            columns: self.columns,
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
             data: self.data.iter().map(|x| x / scalar).collect(),
         }
     }
@@ -200,14 +208,14 @@ impl Matrix {
     }
 
     pub fn multiply(&self, other: &Self) -> Self {
-        if self.columns != other.rows {
+        if self.num_columns != other.num_rows {
             panic!("Matrix dimensions are not compatible for multiplication. The number of columns in self must equal the number of rows in other.");
         }
-        let mut result = Self::new_zero_matrix(self.rows, other.columns);
-        for i in 0..self.rows {
-            for j in 0..other.columns {
+        let mut result = Self::new_zero_matrix(self.num_rows, other.num_columns);
+        for i in 0..self.num_rows {
+            for j in 0..other.num_columns {
                 let mut sum = 0.0;
-                for k in 0..self.columns {
+                for k in 0..self.num_columns {
                     sum += self.get(i, k) * other.get(k, j);
                 }
                 result.set(i, j, sum);
@@ -216,8 +224,23 @@ impl Matrix {
         result
     }
 
+    pub fn mult_vector(&self, v: &ColumnVector) -> ColumnVector {
+        if self.num_columns != v.num_elements() {
+            panic!("Matrix dimensions are not compatible for multiplication. The number of columns in self must equal the number of elements (rows) in v.");
+        }
+        let mut res = ColumnVector::empty();
+        for i in 0..self.num_rows {
+            let mut sum = 0.0;
+            for k in 0..self.num_columns {
+                sum += self.get(i, k) * v.get(k);
+            }
+            res.push(sum);
+        }
+        res
+    }
+
     pub fn hadamard_product(&self, other: &Self) -> Self {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             panic!("Matrix dimensions are not compatible for hadamard product (element-wise multiplication). Both matricies must be the same dimensions.");
         }
 
@@ -227,15 +250,15 @@ impl Matrix {
         }
 
         Self {
-            rows: self.rows,
-            columns: self.columns,
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
             data,
         }
     }
 
     /// Computes the hadamard product, updating self.
     pub fn hadamard_product_in_place(&mut self, other: &Self) {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             panic!("Matrix dimensions are not compatible for hadamard product (element-wise multiplication). Both matricies must be the same dimensions.");
         }
 
@@ -246,10 +269,10 @@ impl Matrix {
     }
 
     pub fn plus(&self, other: &Self) -> Self {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
-                self.rows, self.columns, other.rows, other.columns
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
             );
             panic!("Matrix dimensions are not compatible for addition. Both matricies must have the same dimensions.");
         }
@@ -260,18 +283,18 @@ impl Matrix {
         }
 
         Self {
-            rows: self.rows,
-            columns: self.columns,
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
             data,
         }
     }
 
     /// Add another matrix to self, updating self
     pub fn add_in_place(&mut self, other: &Self) {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
-                self.rows, self.columns, other.rows, other.columns
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
             );
             panic!("Matrix dimensions are not compatible for addition. Both matricies must have the same dimensions.");
         }
@@ -284,10 +307,10 @@ impl Matrix {
 
     /// Create a new Matrix which is self minus other
     pub fn minus(&self, other: &Self) -> Self {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
-                self.rows, self.columns, other.rows, other.columns
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
             );
             panic!("Matrix dimensions are not compatible for subtraction. Both matricies must have the same dimensions.");
         }
@@ -298,18 +321,18 @@ impl Matrix {
         }
 
         Self {
-            rows: self.rows,
-            columns: self.columns,
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
             data,
         }
     }
 
     /// Subtract another matrix from self, updating self.
     pub fn subtract_in_place(&mut self, other: &Self) {
-        if self.rows != other.rows || self.columns != other.columns {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
-                self.rows, self.columns, other.rows, other.columns
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
             );
             panic!("Matrix dimensions are not compatible for subtraction. Both matricies must have the same dimensions.");
         }
@@ -321,7 +344,7 @@ impl Matrix {
     }
 
     pub fn into_value(self) -> f64 {
-        if self.rows == 1 && self.columns == 1 {
+        if self.num_rows == 1 && self.num_columns == 1 {
             let x = self.get(0, 0);
             return x;
         }
@@ -329,7 +352,7 @@ impl Matrix {
     }
 
     pub fn vec_length(&self) -> f64 {
-        if self.columns == 1 {
+        if self.num_columns == 1 {
             let mut sum = 0.0;
             for i in 0..self.data.len() {
                 sum += self.data[i] * self.data[i];
@@ -341,22 +364,35 @@ impl Matrix {
     }
 
     // TODO there's probably a better way to impelement this
-    pub fn extract_column_vector(&self, column_index: usize) -> Matrix {
-        if column_index >= self.columns {
+    pub fn extract_column_vector_as_matrix(&self, column_index: usize) -> Matrix {
+        if column_index >= self.num_columns {
             panic!("column_index must be less than the number of columns");
         }
 
         let mut data = Vec::new();
 
-        for i_row in 0..self.rows {
+        for i_row in 0..self.num_rows {
             data.push(self.get(i_row, column_index));
         }
 
         Matrix {
-            rows: self.rows,
-            columns: 1,
+            num_rows: self.num_rows,
+            num_columns: 1,
             data,
         }
+    }
+
+    pub fn extract_column_vector(&self, column_index: usize) -> ColumnVector {
+        if column_index >= self.num_columns {
+            panic!("column_index must be less than the number of columns");
+        }
+
+        let mut res = ColumnVector::empty();
+        for i_row in 0..self.num_rows {
+            res.push(self.get(i_row, column_index));
+        }
+
+        res
     }
 }
 
@@ -364,15 +400,15 @@ impl fmt::Display for Matrix {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut width_pad = String::new();
         let width_per_column = 9;
-        let pad_width = width_per_column * self.columns + 1; // +1 for the leading space
+        let pad_width = width_per_column * self.num_columns + 1; // +1 for the leading space
         width_pad.push_str(&" ".repeat(pad_width));
 
         let mut result = String::new();
         result.push_str(&format!("╭{}╮\n", width_pad));
 
-        for i in 0..self.rows {
+        for i in 0..self.num_rows {
             result.push_str("│ ");
-            for j in 0..self.columns {
+            for j in 0..self.num_columns {
                 result.push_str(&format!("{:.6} ", self.get(i, j)));
             }
             result.push_str("│");
@@ -386,10 +422,228 @@ impl fmt::Display for Matrix {
     }
 }
 
-// struct Shape {
-//     rows: usize,
-//     columns: usize,
-// }
+impl From<ColumnVector> for Matrix {
+    fn from(column_vector: ColumnVector) -> Matrix {
+        column_vector.inner_matrix
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ColumnVector {
+    inner_matrix: Matrix,
+}
+
+impl ColumnVector {
+    pub fn new(data: &[f64]) -> ColumnVector {
+        ColumnVector {
+            inner_matrix: Matrix::new_column_vector(data),
+        }
+    }
+
+    pub fn new_zero_vector(num_rows: usize) -> ColumnVector {
+        ColumnVector {
+            inner_matrix: Matrix::new_zero_matrix(num_rows, 1),
+        }
+    }
+
+    pub fn fill_new(value: f64, size: usize) -> Self {
+        let mut cv = ColumnVector::empty();
+        for _ in 0..size {
+            cv.push(value);
+        }
+        cv
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            inner_matrix: Matrix::new_column_vector(&[]),
+        }
+    }
+
+    pub fn num_elements(&self) -> usize {
+        self.inner_matrix.num_rows
+    }
+
+    pub fn get(&self, row_index: usize) -> f64 {
+        self.inner_matrix.get(row_index, 0)
+    }
+
+    pub fn set(&mut self, row_index: usize, value: f64) {
+        self.inner_matrix.set(row_index, 0, value);
+    }
+
+    pub fn plus(&self, other: &ColumnVector) -> ColumnVector {
+        let mut data = Vec::new();
+        for i in 0..self.num_elements() {
+            data.push(self.get(i) + other.get(i));
+        }
+        ColumnVector::new(&data)
+    }
+
+    pub fn plus_in_place(&mut self, other: &ColumnVector) {
+        for i in 0..self.num_elements() {
+            self.set(i, self.get(i) + other.get(i));
+        }
+    }
+
+    /// Variant of addition for use in chaining
+    pub fn add(mut self, other: &ColumnVector) -> ColumnVector {
+        for i in 0..self.num_elements() {
+            self.set(i, self.get(i) + other.get(i));
+        }
+        self
+    }
+
+    pub fn minus(&self, other: &ColumnVector) -> ColumnVector {
+        let mut data = Vec::new();
+        for i in 0..self.num_elements() {
+            data.push(self.get(i) - other.get(i));
+        }
+        ColumnVector::new(&data)
+    }
+
+    pub fn minus_in_place(&mut self, other: &ColumnVector) {
+        for i in 0..self.num_elements() {
+            self.set(i, self.get(i) - other.get(i));
+        }
+    }
+
+    pub fn multiply_by_scalar(&self, scalar: f64) -> ColumnVector {
+        let mut data = Vec::new();
+        self.inner_matrix.data.iter().for_each(|x| {
+            data.push(*x * scalar);
+        });
+        ColumnVector::new(&data)
+    }
+
+    pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
+        // trying out another syntax for this - using for_each
+        self.inner_matrix.data.iter_mut().for_each(|x| *x *= scalar);
+    }
+
+    pub fn divide_by_scalar(&self, scalar: f64) -> ColumnVector {
+        let mut data = Vec::new();
+        self.inner_matrix.data.iter().for_each(|x| {
+            data.push(*x / scalar);
+        });
+        ColumnVector::new(&data)
+    }
+
+    pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
+        // trying out another syntax for this - using a more normal for in loop
+        for x in self.inner_matrix.data.iter_mut() {
+            *x /= scalar;
+        }
+    }
+
+    pub fn mult_matrix(&self, other: &Matrix) -> Matrix {
+        // TODO: re-implement without cloning
+        let self_clone = self.clone();
+        let m: Matrix = self_clone.into();
+        let res = m.multiply(&other);
+        res
+    }
+
+    pub fn dot_product(&self, other: &ColumnVector) -> f64 {
+        if self.num_elements() != other.num_elements() {
+            panic!("dot_product requires two vectors of the same length");
+        }
+
+        let mut sum = 0.0;
+        for i in 0..self.num_elements() {
+            sum += self.get(i) * other.get(i);
+        }
+        sum
+    }
+
+    pub fn hadamard_product(&self, other: &ColumnVector) -> ColumnVector {
+        if self.num_elements() != other.num_elements() {
+            panic!("hadamard_product on column vectors requires that the two vectors have of the same length");
+        }
+
+        let mut data = Vec::new();
+        for i in 0..self.num_elements() {
+            data.push(self.get(i) * other.get(i));
+        }
+        ColumnVector::new(&data)
+    }
+
+    pub fn hadamard_product_in_place(&mut self, other: &ColumnVector) {
+        if self.num_elements() != other.num_elements() {
+            panic!("hadamard_product on column vectors requires that the two vectors have of the same length");
+        }
+
+        for i in 0..self.num_elements() {
+            self.set(i, self.get(i) * other.get(i));
+        }
+    }
+
+    pub fn vec_length(&self) -> f64 {
+        let mut sum = 0.0;
+        // TODO: improve after implementing Iterator on ColumnVector
+        for i in 0..self.num_elements() {
+            sum += self.get(i) * self.get(i);
+        }
+        sum.sqrt()
+    }
+
+    pub fn push(&mut self, value: f64) {
+        self.inner_matrix.data.push(value);
+        self.inner_matrix.num_rows += 1;
+    }
+
+    pub fn transpose(&self) -> Matrix {
+        self.inner_matrix.transpose()
+    }
+
+    pub fn into_value(self) -> f64 {
+        if self.num_elements() != 1 {
+            panic!("into_value is only valid for a column vector with one element");
+        }
+        self.get(0)
+    }
+}
+
+impl From<Matrix> for ColumnVector {
+    fn from(matrix: Matrix) -> ColumnVector {
+        if matrix.num_columns != 1 {
+            panic!(
+                "Cannot convert a {}x{} matrix into a column vector",
+                matrix.num_rows, matrix.num_columns
+            );
+        }
+
+        ColumnVector {
+            inner_matrix: matrix,
+        }
+    }
+}
+
+impl fmt::Display for ColumnVector {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut width_pad = String::new();
+        let width_per_column = 9;
+        let pad_width = width_per_column + 1; // +1 for the leading space
+        width_pad.push_str(&" ".repeat(pad_width));
+
+        let mut result = String::new();
+        result.push_str(&format!("╭{}╮\n", width_pad));
+
+        for i in 0..self.inner_matrix.num_rows {
+            result.push_str("│ ");
+            for j in 0..self.inner_matrix.num_columns {
+                result.push_str(&format!("{:.6} ", self.inner_matrix.get(i, j)));
+            }
+            result.push_str("│");
+            result.push_str("\n");
+        }
+
+        result.push_str(&format!("╰{}╯\n", width_pad));
+        // result.push_str("╰\n");
+
+        write!(f, "{}", result)
+    }
+}
 
 pub struct RowsMatrixBuilder {
     num_columns: Option<usize>,
@@ -454,8 +708,8 @@ impl RowsMatrixBuilder {
             }
 
             Matrix {
-                rows: num_rows,
-                columns: num_columns,
+                num_rows,
+                num_columns,
                 data,
             }
         } else {
@@ -520,8 +774,8 @@ impl ColumnsMatrixBuilder {
             }
 
             Matrix {
-                rows: num_rows,
-                columns: num_columns,
+                num_rows,
+                num_columns,
                 data,
             }
         } else {
@@ -561,8 +815,8 @@ mod tests {
     #[test]
     fn new_identity_matrix_works() {
         let m = Matrix::new_identity_matrix(3);
-        assert_eq!(m.rows, 3);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 3);
+        assert_eq!(m.num_columns, 3);
         assert_eq!(m.data, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(0, 1), 0.0);
@@ -609,8 +863,8 @@ mod tests {
         let theta = Matrix::new_column_vector(&[0.0, 1.0, 3.0]);
         let theta_t = theta.transpose();
 
-        assert_eq!(theta_t.rows, 1);
-        assert_eq!(theta_t.columns, 3);
+        assert_eq!(theta_t.num_rows, 1);
+        assert_eq!(theta_t.num_columns, 3);
         assert_eq!(theta_t.data, vec![0.0, 1.0, 3.0]);
     }
 
@@ -620,14 +874,14 @@ mod tests {
         let x = Matrix::new_column_vector(&[7.0, 11.0, 13.0]);
         let theta_t = theta.transpose();
 
-        assert_eq!(theta_t.rows, 1);
-        assert_eq!(theta_t.columns, 3);
+        assert_eq!(theta_t.num_rows, 1);
+        assert_eq!(theta_t.num_columns, 3);
         assert_eq!(theta_t.data, vec![0.0, 1.0, 3.0]);
 
         let y = theta_t.multiply(&x);
 
-        assert_eq!(y.rows, 1);
-        assert_eq!(y.columns, 1);
+        assert_eq!(y.num_rows, 1);
+        assert_eq!(y.num_columns, 1);
         assert_eq!(y.data, vec![50.0]);
 
         let y_into_value = y.into_value();
@@ -643,8 +897,8 @@ mod tests {
 
         let m_t = m.transpose();
 
-        assert_eq!(m_t.rows, 3);
-        assert_eq!(m_t.columns, 2);
+        assert_eq!(m_t.num_rows, 3);
+        assert_eq!(m_t.num_columns, 2);
         assert_eq!(m_t.get(0, 0), 1.0);
         assert_eq!(m_t.get(1, 0), 2.0);
         assert_eq!(m_t.get(2, 0), 3.0);
@@ -674,8 +928,8 @@ mod tests {
 
         let m3 = m1.multiply(&m2);
 
-        assert_eq!(m3.rows, 2);
-        assert_eq!(m3.columns, 2);
+        assert_eq!(m3.num_rows, 2);
+        assert_eq!(m3.num_columns, 2);
         assert_eq!(m3.get(0, 0), 140.0);
         assert_eq!(m3.get(0, 1), 146.0);
         assert_eq!(m3.get(1, 0), 320.0);
@@ -692,10 +946,10 @@ mod tests {
         let v = Matrix::new_column_vector(&[1.0, 2.0]);
         let v_out = m_rotation.multiply(&v);
 
-        assert_eq!(v_out.rows, 2);
-        assert_eq!(v_out.columns, 1);
+        assert_eq!(v_out.num_rows, 2);
+        assert_eq!(v_out.num_columns, 1);
         assert_eq!(v_out.get(0, 0), -2.0);
-        assert_eq!(v_out.get(0, 1), 1.0);
+        assert_eq!(v_out.get(1, 0), 1.0); // TODO: I had this backwards and it still worked - was something wrong with get(). probably need to add bounds checking on the indexes
 
         // shear
         let mut m_shear = Matrix::empty_with_num_rows(2);
@@ -704,8 +958,8 @@ mod tests {
 
         let v = Matrix::new_column_vector(&[1.0, 2.0]);
         let v_out = m_shear.multiply(&v);
-        assert_eq!(v_out.rows, 2);
-        assert_eq!(v_out.columns, 1);
+        assert_eq!(v_out.num_rows, 2);
+        assert_eq!(v_out.num_columns, 1);
         assert_eq!(v_out.get(0, 0), 3.0);
         assert_eq!(v_out.get(0, 1), 2.0);
 
@@ -716,12 +970,37 @@ mod tests {
         let m = m1.multiply(&m2);
         println!("m: \n{}", m);
 
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 2);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 2);
         assert_eq!(m.get(0, 0), 3.0);
         assert_eq!(m.get(0, 1), 4.0);
         assert_eq!(m.get(1, 0), 6.0);
         assert_eq!(m.get(1, 1), 8.0);
+    }
+
+    #[test]
+    fn test_matrix_vector_multiplication_with_column_vector_type() {
+        // 90 degree counterclockwise rotation
+        let mut m_rotation = Matrix::empty_with_num_rows(2);
+        m_rotation.push_column(&[0.0, 1.0]);
+        m_rotation.push_column(&[-1.0, 0.0]);
+
+        let v = ColumnVector::new(&[1.0, 2.0]);
+        let v_out = m_rotation.mult_vector(&v);
+        assert_eq!(v_out.num_elements(), 2);
+        assert_eq!(v_out.get(0), -2.0);
+        assert_eq!(v_out.get(1), 1.0);
+
+        // shear
+        let mut m_shear = Matrix::empty_with_num_rows(2);
+        m_shear.push_column(&[1.0, 0.0]);
+        m_shear.push_column(&[1.0, 1.0]);
+
+        let v = ColumnVector::new(&[1.0, 2.0]);
+        let v_out = m_shear.mult_vector(&v);
+        assert_eq!(v_out.num_elements(), 2);
+        assert_eq!(v_out.get(0), 3.0);
+        assert_eq!(v_out.get(1), 2.0);
     }
 
     #[test]
@@ -736,8 +1015,8 @@ mod tests {
 
         let m = m1.plus(&m2);
 
-        assert_eq!(m.rows, 3);
-        assert_eq!(m.columns, 2);
+        assert_eq!(m.num_rows, 3);
+        assert_eq!(m.num_columns, 2);
 
         assert_eq!(m.get(0, 0), 2.0);
         assert_eq!(m.get(0, 1), 8.0);
@@ -761,8 +1040,8 @@ mod tests {
 
         m1.add_in_place(&m2);
 
-        assert_eq!(m1.rows, 3);
-        assert_eq!(m1.columns, 2);
+        assert_eq!(m1.num_rows, 3);
+        assert_eq!(m1.num_columns, 2);
 
         assert_eq!(m1.get(0, 0), 2.0);
         assert_eq!(m1.get(0, 1), 8.0);
@@ -776,13 +1055,13 @@ mod tests {
 
     #[test]
     fn minus_works() {
-        let mut m1 = column_vector![1.0, 2.0, 3.0];
-        let mut m2 = column_vector![1.0, 2.0, 3.0];
+        let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
+        let mut m2 = column_vector_matrix![1.0, 2.0, 3.0];
 
         let m = m1.minus(&m2);
 
-        assert_eq!(m.rows, 3);
-        assert_eq!(m.columns, 1);
+        assert_eq!(m.num_rows, 3);
+        assert_eq!(m.num_columns, 1);
         assert_eq!(m.get(0, 0), 0.0);
         assert_eq!(m.get(1, 0), 0.0);
         assert_eq!(m.get(2, 0), 0.0);
@@ -790,13 +1069,13 @@ mod tests {
 
     #[test]
     fn subtract_works() {
-        let mut m1 = column_vector![1.0, 2.0, 3.0];
-        let m2 = column_vector![1.0, 2.0, 3.0];
+        let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
+        let m2 = column_vector_matrix![1.0, 2.0, 3.0];
 
         m1.subtract_in_place(&m2);
 
-        assert_eq!(m1.rows, 3);
-        assert_eq!(m1.columns, 1);
+        assert_eq!(m1.num_rows, 3);
+        assert_eq!(m1.num_columns, 1);
         assert_eq!(m1.get(0, 0), 0.0);
         assert_eq!(m1.get(1, 0), 0.0);
         assert_eq!(m1.get(2, 0), 0.0);
@@ -807,11 +1086,11 @@ mod tests {
         let m_build_from_columns = Matrix::from_columns(vec![vec![0.0, 1.0], vec![-1.0, 0.0]]);
 
         println!("{:?}", m_build_from_columns.data);
-        println!("rows: {:?}", m_build_from_columns.rows);
-        println!("columns: {:?}", m_build_from_columns.columns);
+        println!("num_rows: {:?}", m_build_from_columns.num_rows);
+        println!("num_columns: {:?}", m_build_from_columns.num_columns);
 
-        assert_eq!(m_build_from_columns.rows, 2);
-        assert_eq!(m_build_from_columns.columns, 2);
+        assert_eq!(m_build_from_columns.num_rows, 2);
+        assert_eq!(m_build_from_columns.num_columns, 2);
 
         assert_eq!(m_build_from_columns.get(0, 0), 0.0);
         assert_eq!(m_build_from_columns.get(0, 1), -1.0);
@@ -832,8 +1111,8 @@ mod tests {
             .build();
 
         let m_hadamard = m.hadamard_product(&m2);
-        assert_eq!(m_hadamard.rows, 2);
-        assert_eq!(m_hadamard.columns, 3);
+        assert_eq!(m_hadamard.num_rows, 2);
+        assert_eq!(m_hadamard.num_columns, 3);
         assert_eq!(m_hadamard.get(0, 0), 1.0);
         assert_eq!(m_hadamard.get(0, 1), 4.0);
         assert_eq!(m_hadamard.get(0, 2), 9.0);
@@ -855,8 +1134,8 @@ mod tests {
             .build();
 
         m.hadamard_product_in_place(&m2);
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(0, 1), 4.0);
         assert_eq!(m.get(0, 2), 9.0);
@@ -867,10 +1146,40 @@ mod tests {
 
     #[test]
     fn test_vec_length() {
-        assert_eq!((column_vector![0.0]).vec_length(), 0.0);
-        assert_eq!((column_vector![1.0]).vec_length(), 1.0);
-        assert_eq!((column_vector![4.0]).vec_length(), 4.0);
-        assert_eq!((column_vector![3.0, 4.0]).vec_length(), 5.0);
+        assert_eq!((column_vector_matrix![0.0]).vec_length(), 0.0);
+        assert_eq!((column_vector_matrix![1.0]).vec_length(), 1.0);
+        assert_eq!((column_vector_matrix![4.0]).vec_length(), 4.0);
+        assert_eq!((column_vector_matrix![3.0, 4.0]).vec_length(), 5.0);
+    }
+
+    #[test]
+    fn test_extract_column_vector_as_matrix() {
+        let m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .with_row(&[7.0, 8.0, 9.0])
+            .build();
+
+        let v0 = m.extract_column_vector_as_matrix(0);
+        assert_eq!(v0.num_rows, 3);
+        assert_eq!(v0.num_columns, 1);
+        assert_eq!(v0.get(0, 0), 1.0);
+        assert_eq!(v0.get(1, 0), 4.0);
+        assert_eq!(v0.get(2, 0), 7.0);
+
+        let v1 = m.extract_column_vector_as_matrix(1);
+        assert_eq!(v1.num_rows, 3);
+        assert_eq!(v1.num_columns, 1);
+        assert_eq!(v1.get(0, 0), 2.0);
+        assert_eq!(v1.get(1, 0), 5.0);
+        assert_eq!(v1.get(2, 0), 8.0);
+
+        let v2 = m.extract_column_vector_as_matrix(2);
+        assert_eq!(v2.num_rows, 3);
+        assert_eq!(v2.num_columns, 1);
+        assert_eq!(v2.get(0, 0), 3.0);
+        assert_eq!(v2.get(1, 0), 6.0);
+        assert_eq!(v2.get(2, 0), 9.0);
     }
 
     #[test]
@@ -882,25 +1191,22 @@ mod tests {
             .build();
 
         let v0 = m.extract_column_vector(0);
-        assert_eq!(v0.rows, 3);
-        assert_eq!(v0.columns, 1);
-        assert_eq!(v0.get(0, 0), 1.0);
-        assert_eq!(v0.get(1, 0), 4.0);
-        assert_eq!(v0.get(2, 0), 7.0);
+        assert_eq!(v0.num_elements(), 3);
+        assert_eq!(v0.get(0), 1.0);
+        assert_eq!(v0.get(1), 4.0);
+        assert_eq!(v0.get(2), 7.0);
 
         let v1 = m.extract_column_vector(1);
-        assert_eq!(v1.rows, 3);
-        assert_eq!(v1.columns, 1);
-        assert_eq!(v1.get(0, 0), 2.0);
-        assert_eq!(v1.get(1, 0), 5.0);
-        assert_eq!(v1.get(2, 0), 8.0);
+        assert_eq!(v1.num_elements(), 3);
+        assert_eq!(v1.get(0), 2.0);
+        assert_eq!(v1.get(1), 5.0);
+        assert_eq!(v1.get(2), 8.0);
 
         let v2 = m.extract_column_vector(2);
-        assert_eq!(v2.rows, 3);
-        assert_eq!(v2.columns, 1);
-        assert_eq!(v2.get(0, 0), 3.0);
-        assert_eq!(v2.get(1, 0), 6.0);
-        assert_eq!(v2.get(2, 0), 9.0);
+        assert_eq!(v2.num_elements(), 3);
+        assert_eq!(v2.get(0), 3.0);
+        assert_eq!(v2.get(1), 6.0);
+        assert_eq!(v2.get(2), 9.0);
     }
 
     #[test]
@@ -911,8 +1217,8 @@ mod tests {
             .build();
 
         let m2 = m.multiply_by_scalar(2.0);
-        assert_eq!(m2.rows, 2);
-        assert_eq!(m2.columns, 3);
+        assert_eq!(m2.num_rows, 2);
+        assert_eq!(m2.num_columns, 3);
 
         assert_eq!(m2.get(0, 0), 2.0);
         assert_eq!(m2.get(0, 1), 4.0);
@@ -931,8 +1237,8 @@ mod tests {
             .build();
 
         m.multiply_by_scalar_in_place(2.0);
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
 
         assert_eq!(m.get(0, 0), 2.0);
         assert_eq!(m.get(0, 1), 4.0);
@@ -951,8 +1257,8 @@ mod tests {
             .build();
 
         let m2 = m.divide_by_scalar(2.0);
-        assert_eq!(m2.rows, 2);
-        assert_eq!(m2.columns, 3);
+        assert_eq!(m2.num_rows, 2);
+        assert_eq!(m2.num_columns, 3);
 
         assert_eq!(m2.get(0, 0), 0.5);
         assert_eq!(m2.get(0, 1), 1.0);
@@ -971,8 +1277,8 @@ mod tests {
             .build();
 
         m.divide_by_scalar_in_place(2.0);
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
 
         assert_eq!(m.get(0, 0), 0.5);
         assert_eq!(m.get(0, 1), 1.0);
@@ -981,6 +1287,254 @@ mod tests {
         assert_eq!(m.get(1, 0), 2.0);
         assert_eq!(m.get(1, 1), 2.5);
         assert_eq!(m.get(1, 2), 3.0);
+    }
+}
+
+#[cfg(test)]
+mod column_vector_tests {
+    use super::*;
+
+    #[test]
+    pub fn test_basics() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        assert_eq!(cv.num_elements(), 3);
+        assert_eq!(cv.get(0), 1.0);
+        assert_eq!(cv.get(1), 2.0);
+        assert_eq!(cv.get(2), 3.0);
+
+        cv.set(0, 4.0);
+        cv.set(1, 5.0);
+        cv.set(2, 6.0);
+        assert_eq!(cv.get(0), 4.0);
+        assert_eq!(cv.get(1), 5.0);
+        assert_eq!(cv.get(2), 6.0);
+    }
+
+    #[test]
+    pub fn new_zero_vector_works() {
+        let cv = ColumnVector::new_zero_vector(3);
+        assert_eq!(cv.num_elements(), 3);
+        assert_eq!(cv.get(0), 0.0);
+        assert_eq!(cv.get(1), 0.0);
+        assert_eq!(cv.get(2), 0.0);
+    }
+
+    #[test]
+    pub fn can_create_a_column_vector_and_use_from_and_into() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cvm: Matrix = cv.into();
+        assert_eq!(cvm.num_rows, 3);
+        assert_eq!(cvm.num_columns, 1);
+        assert_eq!(cvm.get(0, 0), 1.0);
+        assert_eq!(cvm.get(1, 0), 2.0);
+        assert_eq!(cvm.get(2, 0), 3.0);
+
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cvm = Matrix::from(cv);
+        assert_eq!(cvm.num_rows, 3);
+        assert_eq!(cvm.num_columns, 1);
+        assert_eq!(cvm.get(0, 0), 1.0);
+        assert_eq!(cvm.get(1, 0), 2.0);
+        assert_eq!(cvm.get(2, 0), 3.0);
+
+        // check that one can clone a column vector
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = cv.clone();
+        let cvm: Matrix = cv.into();
+        assert_eq!(cvm.num_rows, 3);
+        assert_eq!(cvm.num_columns, 1);
+        assert_eq!(cvm.get(0, 0), 1.0);
+        assert_eq!(cvm.get(1, 0), 2.0);
+        assert_eq!(cvm.get(2, 0), 3.0);
+    }
+
+    #[test]
+    fn plus_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
+        let cv3 = cv.plus(&cv2);
+        assert_eq!(cv2.num_elements(), 3);
+        assert_eq!(cv3.get(0), 5.0);
+        assert_eq!(cv3.get(1), 7.0);
+        assert_eq!(cv3.get(2), 9.0);
+    }
+
+    #[test]
+    fn plus_in_place_works() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
+        cv.plus_in_place(&cv2);
+        assert_eq!(cv.num_elements(), 3);
+        assert_eq!(cv.get(0), 5.0);
+        assert_eq!(cv.get(1), 7.0);
+        assert_eq!(cv.get(2), 9.0);
+    }
+
+    #[test]
+    fn add_in_place_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
+        let res = cv.add(&cv2);
+        assert_eq!(res.num_elements(), 3);
+        assert_eq!(res.get(0), 5.0);
+        assert_eq!(res.get(1), 7.0);
+        assert_eq!(res.get(2), 9.0);
+    }
+
+    #[test]
+    fn minus_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
+        let cv3 = cv.minus(&cv2);
+        assert_eq!(cv2.num_elements(), 3);
+        assert_eq!(cv3.get(0), -3.0);
+        assert_eq!(cv3.get(1), -3.0);
+        assert_eq!(cv3.get(2), -3.0);
+    }
+
+    #[test]
+    fn minus_in_place_works() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
+        cv.minus_in_place(&cv2);
+        assert_eq!(cv2.num_elements(), 3);
+        assert_eq!(cv.get(0), -3.0);
+        assert_eq!(cv.get(1), -3.0);
+        assert_eq!(cv.get(2), -3.0);
+    }
+
+    #[test]
+    fn multiply_by_scalar_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = cv.multiply_by_scalar(2.0);
+        assert_eq!(cv2.num_elements(), 3);
+        assert_eq!(cv2.get(0), 2.0);
+        assert_eq!(cv2.get(1), 4.0);
+        assert_eq!(cv2.get(2), 6.0);
+    }
+
+    #[test]
+    fn multiply_by_scalar_in_place_works() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        cv.multiply_by_scalar_in_place(2.0);
+        assert_eq!(cv.num_elements(), 3);
+        assert_eq!(cv.get(0), 2.0);
+        assert_eq!(cv.get(1), 4.0);
+        assert_eq!(cv.get(2), 6.0);
+    }
+
+    #[test]
+    fn divide_by_scalar_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = cv.divide_by_scalar(2.0);
+        assert_eq!(cv2.num_elements(), 3);
+        assert_eq!(cv2.get(0), 0.5);
+        assert_eq!(cv2.get(1), 1.0);
+        assert_eq!(cv2.get(2), 1.5);
+    }
+
+    #[test]
+    fn divide_by_scalar_in_place_works() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        cv.divide_by_scalar_in_place(2.0);
+        assert_eq!(cv.num_elements(), 3);
+        assert_eq!(cv.get(0), 0.5);
+        assert_eq!(cv.get(1), 1.0);
+        assert_eq!(cv.get(2), 1.5);
+    }
+
+    #[test]
+    fn mult_by_matrix_works() {
+        // TODO: add test case for incompatible dimensions
+
+        let v = column_vector![1.0, 2.0];
+        let m2 = RowsMatrixBuilder::new().with_row(&[3.0, 4.0]).build();
+
+        let m = v.mult_matrix(&m2);
+        println!("m: \n{}", m);
+
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 2);
+        assert_eq!(m.get(0, 0), 3.0);
+        assert_eq!(m.get(0, 1), 4.0);
+        assert_eq!(m.get(1, 0), 6.0);
+        assert_eq!(m.get(1, 1), 8.0);
+    }
+
+    #[test]
+    fn dot_product_works() {
+        let cv1 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let dot = cv1.dot_product(&cv2);
+        assert_eq!(dot, 14.0);
+    }
+
+    #[test]
+    fn hadamard_product_works() {
+        let cv1 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv3 = cv1.hadamard_product(&cv2);
+        assert_eq!(cv3.num_elements(), 3);
+        assert_eq!(cv3.get(0), 1.0);
+        assert_eq!(cv3.get(1), 4.0);
+        assert_eq!(cv3.get(2), 9.0);
+    }
+
+    #[test]
+    fn hadamard_product_in_place_works() {
+        let mut cv1 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        cv1.hadamard_product_in_place(&cv2);
+        println!("{:?}", cv1);
+        assert_eq!(cv1.num_elements(), 3);
+        assert_eq!(cv1.get(0), 1.0);
+        assert_eq!(cv1.get(1), 4.0);
+        assert_eq!(cv1.get(2), 9.0);
+    }
+
+    #[test]
+    fn test_vec_length() {
+        assert_eq!((column_vector![0.0]).vec_length(), 0.0);
+        assert_eq!((column_vector![1.0]).vec_length(), 1.0);
+        assert_eq!((column_vector![4.0]).vec_length(), 4.0);
+        assert_eq!((column_vector![3.0, 4.0]).vec_length(), 5.0);
+    }
+
+    #[test]
+    fn transpose_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let m = cv.transpose();
+        assert_eq!(m.num_rows(), 1);
+        assert_eq!(m.num_columns(), 3);
+        assert_eq!(m.get(0, 0), 1.0);
+        assert_eq!(m.get(0, 1), 2.0);
+        assert_eq!(m.get(0, 2), 3.0);
+    }
+
+    #[test]
+    fn into_value_works() {
+        // TODO: add test case for lengths != 1
+        let cv = column_vector![42.0];
+        let x = cv.into_value();
+        assert_eq!(x, 42.0);
+    }
+
+    #[test]
+    fn fill_new_works() {
+        let cv = ColumnVector::fill_new(42.0, 5);
+        assert_eq!(cv.num_elements(), 5);
+        assert_eq!(cv.get(0), 42.0);
+        assert_eq!(cv.get(1), 42.0);
+        assert_eq!(cv.get(2), 42.0);
+        assert_eq!(cv.get(3), 42.0);
+        assert_eq!(cv.get(4), 42.0);
+    }
+
+    #[test]
+    fn empty_works() {
+        let cv = ColumnVector::empty();
+        assert_eq!(cv.num_elements(), 0);
+        assert_eq!(cv.inner_matrix.num_columns, 1);
     }
 }
 
@@ -995,8 +1549,8 @@ mod rows_matrix_builder_tests {
         rmb.push_row(&[4.0, 5.0, 6.0]);
         let m = rmb.build();
 
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(0, 1), 2.0);
         assert_eq!(m.get(0, 2), 3.0);
@@ -1012,8 +1566,8 @@ mod rows_matrix_builder_tests {
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        assert_eq!(m.rows, 2);
-        assert_eq!(m.columns, 3);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(0, 1), 2.0);
         assert_eq!(m.get(0, 2), 3.0);
@@ -1034,8 +1588,8 @@ mod columns_matrix_builder_tests {
         cmb.push_column(&[4.0, 5.0, 6.0]);
         let m = cmb.build();
 
-        assert_eq!(m.rows, 3);
-        assert_eq!(m.columns, 2);
+        assert_eq!(m.num_rows, 3);
+        assert_eq!(m.num_columns, 2);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(1, 0), 2.0);
         assert_eq!(m.get(2, 0), 3.0);
@@ -1051,8 +1605,8 @@ mod columns_matrix_builder_tests {
             .with_column(&[4.0, 5.0, 6.0])
             .build();
 
-        assert_eq!(m.rows, 3);
-        assert_eq!(m.columns, 2);
+        assert_eq!(m.num_rows, 3);
+        assert_eq!(m.num_columns, 2);
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(1, 0), 2.0);
         assert_eq!(m.get(2, 0), 3.0);

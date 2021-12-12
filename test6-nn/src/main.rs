@@ -1,5 +1,5 @@
-use common::column_vector;
-use common::matrix::{ColumnsMatrixBuilder, Matrix, RowsMatrixBuilder};
+use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
+use common::{column_vector, column_vector_matrix};
 
 use rand::distributions::{Distribution, Standard, Uniform};
 use rand::Rng;
@@ -9,21 +9,16 @@ fn sigmoid(z: f64) -> f64 {
     1.0 / (1.0 + (-z).exp())
 }
 
-fn sigmoid_vector(z_vector: &Matrix) -> Matrix {
-    if z_vector.columns != 1 {
-        panic!("this function is only applicable to column vectors");
-    }
-    if z_vector.rows == 0 {
+fn sigmoid_vector(v: &ColumnVector) -> ColumnVector {
+    if v.num_elements() == 0 {
         panic!("this function is only valid for column vectors with at least one element (row)")
     }
 
-    let mut matrix = z_vector.clone();
-
-    for m in 0..matrix.rows {
-        matrix.set(m, 0, sigmoid(z_vector.get(m, 0)));
+    let mut res = ColumnVector::empty();
+    for i in 0..v.num_elements() {
+        res.push(sigmoid(v.get(i)))
     }
-
-    matrix
+    res
 }
 
 /// Compute the derivative of the sigmoid function at the given z
@@ -31,25 +26,26 @@ fn sigmoid_prime(z: f64) -> f64 {
     sigmoid(z) * (1.0 - sigmoid(z))
 }
 
-fn sigmoid_prime_vector(z_vector: &Matrix) -> Matrix {
-    if z_vector.columns != 1 {
-        panic!("this function is only applicable to column vectors");
-    }
-    if z_vector.rows == 0 {
+fn sigmoid_prime_vector(v: &ColumnVector) -> ColumnVector {
+    if v.num_elements() == 0 {
         panic!("this function is only valid for column vectors with at least one element (row)")
     }
 
-    let mut matrix = z_vector.clone();
+    let mut res = v.clone();
 
-    for m in 0..matrix.rows {
-        matrix.set(m, 0, sigmoid_prime(z_vector.get(m, 0)));
+    for i in 0..res.num_elements() {
+        res.set(i, sigmoid_prime(v.get(i)));
     }
 
-    matrix
+    res
 }
 
-fn z(weights_matrix: &Matrix, inputs_vector: &Matrix, biases_vector: &Matrix) -> Matrix {
-    weights_matrix.multiply(inputs_vector).plus(biases_vector)
+fn z(
+    weights_matrix: &Matrix,
+    inputs_vector: &ColumnVector,
+    biases_vector: &ColumnVector,
+) -> ColumnVector {
+    weights_matrix.mult_vector(inputs_vector).add(biases_vector)
 }
 
 pub struct SimpleNeuralNetwork {
@@ -61,9 +57,9 @@ pub struct SimpleNeuralNetwork {
     // Thus, the dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
     weights: Vec<Matrix>,
 
-    // A vec of row vector matricies - one for inter-layer step
-    // Each vector will have length equal to the number of neurons in the next layer
-    biases: Vec<Matrix>,
+    // A vec of ColumnVectors - one for inter-layer step.
+    // Each vector will have length equal to the number of neurons in the next layer.
+    biases: Vec<ColumnVector>,
 }
 
 impl SimpleNeuralNetwork {
@@ -71,9 +67,9 @@ impl SimpleNeuralNetwork {
         let mut biases = Vec::new();
 
         for i in 1..sizes.len() {
-            let mut biases_row_vector =
+            let biases_column_vector =
                 column_vec_of_random_values_from_distribution(0.0, 1.0, sizes[i]);
-            biases.push(biases_row_vector);
+            biases.push(biases_column_vector);
         }
         println!("{:?}", biases);
 
@@ -102,7 +98,7 @@ impl SimpleNeuralNetwork {
         self.sizes.len()
     }
 
-    pub fn feed_forward(&self, input_activations: &Matrix) -> Matrix {
+    pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
         let mut activation_vector = input_activations.clone();
         // println!("feed_forward - weights length: {}", self.weights.len());
         // println!("feed_forward - biases length: {}", self.biases.len());
@@ -124,14 +120,14 @@ impl SimpleNeuralNetwork {
         activation_vector
     }
 
-    /// Feed forward capturing the intermediate z values and activation values
+    /// Feed forward capturing the intermediate z values and activation values.
     /// # Arguments
     /// * `input_activations` - The input activations
     /// # Returns
-    /// A Vec<FeedForwardIntermediateValues> - one for each layer other than the first (input) layer (simiar to weights and biases)
+    /// A Vec<FeedForwardIntermediateValues> - one for each layer other than the first (input) layer (simiar to weights and biases).
     fn feed_forward_capturing_intermediates(
         &self,
-        input_activations: &Matrix,
+        input_activations: &ColumnVector,
     ) -> Vec<FeedForwardIntermediateValues> {
         let mut intermediates = Vec::new();
 
@@ -147,10 +143,8 @@ impl SimpleNeuralNetwork {
 
             if l == 0 {
                 intermediates.push(FeedForwardIntermediateValues {
-                    // Filling the layer 0 z vector with NaN because it is never used and isn't a valid computation
-                    z_vector: Matrix::new_column_vector(
-                        vec![f64::NAN; activation_vector.rows].as_slice(),
-                    ),
+                    // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
+                    z_vector: ColumnVector::fill_new(f64::NAN, activation_vector.num_elements()),
                     activations_vector: activation_vector.clone(),
                 });
             } else {
@@ -175,13 +169,9 @@ impl SimpleNeuralNetwork {
     // here it would be nice to be able to type the inputs and outputs as Vector (column vector type Matrix as opposed to just any Matrix)
     pub fn cost_for_single_training_example(
         &self,
-        inputs: &Matrix,
-        expected_outputs: &Matrix,
+        inputs: &ColumnVector,
+        expected_outputs: &ColumnVector,
     ) -> f64 {
-        if inputs.columns != 1 || expected_outputs.columns != 1 {
-            panic!("both inpts and expected_outputs must be column vectors");
-        }
-
         let outputs = self.feed_forward(&inputs);
 
         let diff_vec = expected_outputs.minus(&outputs);
@@ -204,7 +194,7 @@ impl SimpleNeuralNetwork {
         expected_outputs: &Matrix,
     ) -> f64 {
         let mut cost = 0.0;
-        for i_column in 0..all_inputs.columns {
+        for i_column in 0..all_inputs.num_columns() {
             let next_input_vector = all_inputs.extract_column_vector(i_column);
             let next_desired_output_vector = expected_outputs.extract_column_vector(i_column);
 
@@ -213,18 +203,16 @@ impl SimpleNeuralNetwork {
             cost += next_cost;
         }
 
-        cost / (all_inputs.columns as f64)
+        cost / (all_inputs.num_columns() as f64)
     }
 
     // Backprop Equation 1 from the Neilson book
-    // all inputs and the output are Column Vectors
     fn error_last_layer(
         &self,
-        output_activations_vector: &Matrix,
-        expected_outputs_vector: &Matrix,
-        output_layer_z_vector: &Matrix,
-    ) -> Matrix {
-        // all inputs and the output are Column Vectors
+        output_activations_vector: &ColumnVector,
+        expected_outputs_vector: &ColumnVector,
+        output_layer_z_vector: &ColumnVector,
+    ) -> ColumnVector {
         let mut part1 = output_activations_vector.minus(expected_outputs_vector);
         let part2 = sigmoid_prime_vector(output_layer_z_vector);
         part1.hadamard_product_in_place(&part2);
@@ -232,13 +220,12 @@ impl SimpleNeuralNetwork {
     }
 
     // Backprop Equation 2 from the Neilson book
-    // all inputs and the output are Column Vectors
     fn error_any_layer_but_last(
         &self,
         layer: usize,
-        error_vector_for_plus_one_layer: &Matrix,
-        this_layer_z_vector: &Matrix,
-    ) -> Matrix {
+        error_vector_for_plus_one_layer: &ColumnVector,
+        this_layer_z_vector: &ColumnVector,
+    ) -> ColumnVector {
         // println!("in error_any_layer_but_last");
         // println!("  - layer: {}", layer);
         // println!("  - weights.length(): {}", self.weights.len());
@@ -248,7 +235,7 @@ impl SimpleNeuralNetwork {
         let weight_matrix = self.weights.get(layer).unwrap();
         let weight_matrix_transpose = weight_matrix.transpose();
 
-        let mut part1 = weight_matrix_transpose.multiply(error_vector_for_plus_one_layer);
+        let mut part1 = weight_matrix_transpose.mult_vector(error_vector_for_plus_one_layer);
         let part2 = sigmoid_prime_vector(this_layer_z_vector);
 
         part1.hadamard_product_in_place(&part2);
@@ -259,12 +246,12 @@ impl SimpleNeuralNetwork {
     /// where layer L-1 is the output layer and layer 0 is the input layer.
     fn backpropate_errors(
         &self,
-        expected_outputs_vector: &Matrix,
+        expected_outputs_vector: &ColumnVector,
         feedforward_intermediate_values: &Vec<FeedForwardIntermediateValues>,
-    ) -> Vec<Matrix> {
+    ) -> Vec<ColumnVector> {
         // loop through the layers from back to front, and compute the error at each one.
         // Create a column vector representing the errors at each layer
-        let mut error_vectors = Vec::<Matrix>::new(); // each Matrix is a Column Vector
+        let mut error_vectors = Vec::<ColumnVector>::new();
 
         let last_layer_index = self.num_layers() - 1;
 
@@ -331,7 +318,7 @@ impl SimpleNeuralNetwork {
 
     fn update_weights_and_biases(
         &mut self,
-        error_vectors_for_each_training_example: &Vec<Vec<Matrix>>,
+        error_vectors_for_each_training_example: &Vec<Vec<ColumnVector>>,
         intermediates_for_each_training_example: &Vec<Vec<FeedForwardIntermediateValues>>,
         learning_rate: f64,
     ) {
@@ -350,8 +337,7 @@ impl SimpleNeuralNetwork {
             // let mut weights_partials_vector_avg = Matrix::new_column_vector(&vec![0.0; self.sizes[l]]);
             let mut weights_partials_matrix_avg =
                 Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
-
-            let mut bias_partials_vector_avg = Matrix::new_zero_matrix(self.sizes[l], 1);
+            let mut bias_partials_vector_avg = ColumnVector::new_zero_vector(self.sizes[l]);
 
             for i_training_ex in 0..num_training_examples {
                 let error_vectors_for_this_training_example =
@@ -384,8 +370,8 @@ impl SimpleNeuralNetwork {
 
                 // println!("\norig weights matrix:\n{}", &self.weights[l - 1]); // -1 because one less than num layers
 
-                let weights_grad =
-                    this_layer_errors_vector.multiply(&previous_layer_activations_vector_transpose);
+                let weights_grad = this_layer_errors_vector
+                    .mult_matrix(&previous_layer_activations_vector_transpose);
                 // println!("\nweights_grad:\n{}", weights_grad);
 
                 // println!(
@@ -396,7 +382,7 @@ impl SimpleNeuralNetwork {
                 weights_partials_matrix_avg.add_in_place(&weights_grad);
 
                 // now do the similar thing for the biases
-                bias_partials_vector_avg.add_in_place(this_layer_errors_vector);
+                bias_partials_vector_avg.plus_in_place(this_layer_errors_vector);
             }
 
             weights_partials_matrix_avg.divide_by_scalar_in_place(num_training_examples as f64);
@@ -429,7 +415,7 @@ impl SimpleNeuralNetwork {
 
             let biases = self.biases.get_mut(l - 1).unwrap();
             // biases.subtract_in_place(&bias_partials_vector_avg.multiply_by_scalar(learning_rate));
-            biases.subtract_in_place(&bias_partials_vector_avg);
+            biases.minus_in_place(&bias_partials_vector_avg);
             // println!("\nupdated biases vector:\n{}", biases);
 
             layer_index_in_errors_vec += 1;
@@ -443,7 +429,7 @@ impl SimpleNeuralNetwork {
         epocs: usize,
         learning_rate: f64,
     ) {
-        if training_inputs.columns != expected_outputs.columns {
+        if training_inputs.num_columns() != expected_outputs.num_columns() {
             panic!("the number of training inputs must match the number of training outputs");
         }
 
@@ -456,7 +442,7 @@ impl SimpleNeuralNetwork {
             let mut error_vectors_for_each_training_example = Vec::new();
             let mut intermediates_for_each_training_example = Vec::new();
 
-            for i_training_example in 0..training_inputs.columns {
+            for i_training_example in 0..training_inputs.num_columns() {
                 let next_training_inputs_vector =
                     training_inputs.extract_column_vector(i_training_example);
                 let next_training_expected_output_vector =
@@ -490,8 +476,8 @@ impl SimpleNeuralNetwork {
 }
 
 struct FeedForwardIntermediateValues {
-    z_vector: Matrix,           // column vector
-    activations_vector: Matrix, // column vector
+    z_vector: ColumnVector,
+    activations_vector: ColumnVector,
 }
 
 fn column_vec_of_random_values(min: f64, max: f64, size: usize) -> Matrix {
@@ -505,16 +491,20 @@ fn column_vec_of_random_values(min: f64, max: f64, size: usize) -> Matrix {
     Matrix::new_column_vector(&values)
 }
 
-fn column_vec_of_random_values_from_distribution(mean: f64, std_dev: f64, size: usize) -> Matrix {
+fn column_vec_of_random_values_from_distribution(
+    mean: f64,
+    std_dev: f64,
+    size: usize,
+) -> ColumnVector {
     let mut rng = rand::thread_rng();
-    let normal = Normal::new(mean, 1.0).unwrap();
+    let normal = Normal::new(mean, std_dev).unwrap();
 
-    let mut values = Vec::new();
+    let mut res = ColumnVector::empty();
     for _ in 0..size {
         let x = normal.sample(&mut rng);
-        values.push(x);
+        res.push(x);
     }
-    Matrix::new_column_vector(&values)
+    res
 }
 
 fn main() {
@@ -541,26 +531,10 @@ fn main() {
 
     let biases_1 = column_vector![0.1, 0.1];
 
-    let step2z = weights_1.multiply(&res).plus(&biases_1);
+    let step2z = weights_1.mult_vector(&res).plus(&biases_1);
     println!("step2z: {:?}", step2z);
     let sstepz = sigmoid_vector(&step2z);
     println!("sstepz: \n{}", sstepz);
-
-    // let inputs = column_vector![1.0, 2.0, 3.0];
-    // let mut weights = Matrix::empty_with_num_cols(3);
-    // weights.push_row(&[1.0, 2.0, 3.0]);
-    // weights.push_row(&[4.0, 5.0, 6.0]);
-
-    // let mut weights = Matrix::new_zero_matrix(2, 3);
-    // weights.set(0, 0, 1.0);
-    // weights.set(0, 1, 2.0);
-    // weights.set(0, 2, 3.0);
-    // weights.set(1, 0, 4.0);
-    // weights.set(1, 1, 5.0);
-    // weights.set(1, 2, 6.0);
-
-    // let outputs = weights.multiply(&inputs);
-    // println!("outputs: {:?}", outputs);
 
     let num_neurons_layer_0 = 3;
     let num_neurons_layer_1 = 2;
@@ -587,8 +561,6 @@ fn main() {
         biases: vec![biases],
     };
 
-    // let input_activations = column_vector![1.0, 1.0];
-
     let outputs = nn.feed_forward(&inputs);
 
     println!("outputs: {:?}", outputs);
@@ -613,6 +585,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::linalg::ColumnsMatrixBuilder;
     use common::scalar_valued_multivariable_point::ScalarValuedMultivariablePoint;
     use float_cmp::approx_eq;
 
@@ -631,16 +604,35 @@ mod tests {
     fn sigmoid_vector_works() {
         let m1 = column_vector![-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0];
         let m2 = sigmoid_vector(&m1);
+        assert_eq!(m2.num_elements(), 7);
+        assert_eq!(m2.get(0), sigmoid(-4.0));
+        assert_eq!(m2.get(1), sigmoid(-2.0));
+        assert_eq!(m2.get(2), sigmoid(-1.0));
+        assert_eq!(m2.get(3), 0.5);
+        assert_eq!(m2.get(4), sigmoid(1.0));
+        assert_eq!(m2.get(5), sigmoid(2.0));
+        assert_eq!(m2.get(6), sigmoid(4.0));
+    }
 
-        assert_eq!(m2.rows, 7);
-        assert_eq!(m2.columns, 1);
-        assert_eq!(m2.get(0, 0), sigmoid(-4.0));
-        assert_eq!(m2.get(1, 0), sigmoid(-2.0));
-        assert_eq!(m2.get(2, 0), sigmoid(-1.0));
-        assert_eq!(m2.get(3, 0), 0.5);
-        assert_eq!(m2.get(4, 0), sigmoid(1.0));
-        assert_eq!(m2.get(5, 0), sigmoid(2.0));
-        assert_eq!(m2.get(6, 0), sigmoid(4.0));
+    #[test]
+    fn sigmoid_prime_works() {
+        assert_eq!(sigmoid_prime(-1.0), 0.19661193324148185);
+        assert_eq!(sigmoid_prime(-0.5), 0.2350037122015945);
+        assert_eq!(sigmoid_prime(0.0), 0.25);
+        assert_eq!(sigmoid_prime(0.5), 0.2350037122015945);
+        assert_eq!(sigmoid_prime(1.0), 0.19661193324148185);
+    }
+
+    #[test]
+    fn sigmoid_prime_vec_works() {
+        let v = ColumnVector::new(&[-1.0, -0.5, 0.0, 0.5, 1.0]);
+        let sig_vec = sigmoid_prime_vector(&v);
+        assert_eq!(sig_vec.num_elements(), 5);
+        assert_eq!(sig_vec.get(0), 0.19661193324148185);
+        assert_eq!(sig_vec.get(1), 0.2350037122015945);
+        assert_eq!(sig_vec.get(2), 0.25);
+        assert_eq!(sig_vec.get(3), 0.2350037122015945);
+        assert_eq!(sig_vec.get(4), 0.19661193324148185);
     }
 
     pub fn get_simple_two_layer_nn_for_test() -> SimpleNeuralNetwork {
@@ -650,8 +642,6 @@ mod tests {
         // Layer 0 (input): 3 neurons
         // Layer 1 (output): 2 neurons
         // weights matrix -> 2x3
-
-        let inputs = column_vector![0.0, 0.5, 1.0];
 
         let weights = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5])
@@ -673,8 +663,6 @@ mod tests {
         let num_neurons_layer_0 = 2;
         let num_neurons_layer_1 = 3;
         let num_neurons_layer_2 = 1;
-
-        let inputs = column_vector![0.0, 0.5, 1.0];
 
         // 3x2
         let weights_0 = RowsMatrixBuilder::new()
@@ -750,22 +738,19 @@ mod tests {
         // Layer N: 3 neurons
         // L N-1: 2 neurons
         // weights matrix -> 2x3
-
-        let inputs = column_vector![1.0, 2.0, 3.0];
-
         let weights = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
         let biases = column_vector![0.5, 0.5];
+        let inputs = column_vector![1.0, 2.0, 3.0];
 
         let outputs = z(&weights, &inputs, &biases);
 
-        assert_eq!(outputs.rows, 2);
-        assert_eq!(outputs.columns, 1);
-        assert_eq!(outputs.get(0, 0), 14.5);
-        assert_eq!(outputs.get(1, 0), 32.5);
+        assert_eq!(outputs.num_elements(), 2);
+        assert_eq!(outputs.get(0), 14.5);
+        assert_eq!(outputs.get(1), 32.5);
     }
 
     #[test]
@@ -793,10 +778,9 @@ mod tests {
         };
 
         let outputs = nn.feed_forward(&inputs);
-        assert_eq!(outputs.rows, 2);
-        assert_eq!(outputs.columns, 1);
-        assert_eq!(outputs.get(0, 0), 0.7005671424739729);
-        assert_eq!(outputs.get(1, 0), 0.8320183851339245);
+        assert_eq!(outputs.num_elements(), 2);
+        assert_eq!(outputs.get(0), 0.7005671424739729);
+        assert_eq!(outputs.get(1), 0.8320183851339245);
     }
 
     #[test]
@@ -827,11 +811,11 @@ mod tests {
         let biases_1 = column_vector![0.1, 0.1];
 
         // manually compute the correct output to use in later assertion
-        let z0 = weights_0.multiply(&inputs).plus(&biases_0);
+        let z0 = weights_0.mult_vector(&inputs).plus(&biases_0);
         let sz0 = sigmoid_vector(&z0);
         println!("sz0: {:?}", sz0);
 
-        let z1 = weights_1.multiply(&sz0).plus(&biases_1);
+        let z1 = weights_1.mult_vector(&sz0).plus(&biases_1);
         let sz1 = sigmoid_vector(&z1);
         println!("sz1: {:?}", sz1);
 
@@ -855,14 +839,13 @@ mod tests {
         println!("outputs: {:?}", outputs);
         // assert_eq!(1, 0);
 
-        assert_eq!(outputs.rows, 2);
-        assert_eq!(outputs.columns, 1);
-        assert_eq!(outputs.get(0, 0), sz1.get(0, 0));
-        assert_eq!(outputs.get(1, 0), sz1.get(1, 0));
+        assert_eq!(outputs.num_elements(), 2);
+        assert_eq!(outputs.get(0), sz1.get(0));
+        assert_eq!(outputs.get(1), sz1.get(1));
 
         // the actual outputs, which should be the same as the manually computed outputs
-        assert_eq!(outputs.get(0, 0), 0.8707823298624764);
-        assert_eq!(outputs.get(1, 0), 0.9063170030285769);
+        assert_eq!(outputs.get(0), 0.8707823298624764);
+        assert_eq!(outputs.get(1), 0.9063170030285769);
     }
 
     #[test]
@@ -896,11 +879,11 @@ mod tests {
         let biases_1 = column_vector![0.1, 0.1];
 
         // manually compute the correct output to use in later assertion
-        let z0 = weights_0.multiply(&inputs).plus(&biases_0);
+        let z0 = weights_0.mult_vector(&inputs).plus(&biases_0);
         let sz0 = sigmoid_vector(&z0);
         println!("sz0: {:?}", sz0);
 
-        let z1 = weights_1.multiply(&sz0).plus(&biases_1);
+        let z1 = weights_1.mult_vector(&sz0).plus(&biases_1);
         let sz1 = sigmoid_vector(&z1);
         println!("sz1: {:?}", sz1);
 
@@ -927,14 +910,13 @@ mod tests {
         println!("outputs: {:?}", outputs);
         // assert_eq!(1, 0);
 
-        assert_eq!(outputs.rows, 2);
-        assert_eq!(outputs.columns, 1);
-        assert_eq!(outputs.get(0, 0), sz1.get(0, 0));
-        assert_eq!(outputs.get(1, 0), sz1.get(1, 0));
+        assert_eq!(outputs.num_elements(), 2);
+        assert_eq!(outputs.get(0), sz1.get(0));
+        assert_eq!(outputs.get(1), sz1.get(1));
 
         // the actual outputs, which should be the same as the manually computed outputs
-        assert_eq!(outputs.get(0, 0), 0.8707823298624764);
-        assert_eq!(outputs.get(1, 0), 0.9063170030285769);
+        assert_eq!(outputs.get(0), 0.8707823298624764);
+        assert_eq!(outputs.get(1), 0.9063170030285769);
     }
 
     #[test]
@@ -976,8 +958,8 @@ mod tests {
         let length_of_diff_vector_squared = length_of_diff_vector * length_of_diff_vector;
         let over_two = length_of_diff_vector_squared / 2.0;
 
-        println!("\nactual_output_vector: \n{:?}", actual_output_vector.data);
-        println!("diff_vec: \n{:?}", diff_vec.data);
+        println!("\nactual_output_vector: \n{}", actual_output_vector);
+        println!("diff_vec: \n{}", diff_vec);
         println!("length_of_diff_vector: \n{:?}", length_of_diff_vector);
         println!(
             "length_of_diff_vector_squared: \n{:?}",
@@ -1040,7 +1022,7 @@ mod tests {
         let mut error_vectors_for_each_training_example = Vec::new();
         let mut intermediates_for_each_training_example = Vec::new();
 
-        for i_training_example in 0..input_examples.columns {
+        for i_training_example in 0..input_examples.num_columns() {
             println!("\nfor the {}th training example", i_training_example);
             let next_inputs_vector = input_examples.extract_column_vector(i_training_example);
             let next_expected_outputs_vector =
@@ -1175,7 +1157,5 @@ mod tests {
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
-
-        // assert_eq!(1, 0);
     }
 }
