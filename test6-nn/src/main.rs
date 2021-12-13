@@ -1055,34 +1055,39 @@ mod tests {
         // assert_eq!(1, 0);
     }
 
-    #[test]
-    fn test_nn() {
-        let orange = 0.0;
-        let blue = 1.0;
+    const ORANGE: f64 = 0.0;
+    const BLUE: f64 = 1.0;
 
+    fn get_data_set_1() -> Vec<ScalarValuedMultivariablePoint> {
         // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
         let training_data = vec![
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, orange),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, blue),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
+            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
         ];
+        training_data
+    }
+
+    #[test]
+    fn test_nn() {
+        let training_data = get_data_set_1();
 
         // 2 x 3 x 1
         let num_neurons_layer_0 = 2;
@@ -1152,8 +1157,8 @@ mod tests {
             nn.cost_for_single_training_example(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
-        assert!(approx_eq!(f64, predicted_output_0, blue, epsilon = 0.01));
-        assert!(approx_eq!(f64, predicted_output_1, orange, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
