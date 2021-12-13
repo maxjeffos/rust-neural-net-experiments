@@ -1,23 +1,29 @@
 use rand;
+use rand::Rng;
 
 pub mod linalg;
 pub mod old_matrix;
 pub mod point;
 pub mod scalar_valued_multivariable_point;
+pub mod sigmoid;
+use rand::distributions::Distribution;
+use rand_distr::Normal;
 
-pub enum DistributionType {
-    Uniform,
-    Gaussian,
-    // Cauchy,
-    // Poisson,
-}
+use linalg::{ColumnVector, Matrix};
 
-pub enum Distribution {
-    Uniform(f64, f64),
-    Gaussian(f64, f64),
-    // Cauchy(f64, f64),
-    // Poisson(f64),
-}
+// pub enum DistributionType {
+//     Uniform,
+//     Gaussian,
+//     // Cauchy,
+//     // Poisson,
+// }
+
+// pub enum Distribution {
+//     Uniform(f64, f64),
+//     Gaussian(f64, f64),
+//     // Cauchy(f64, f64),
+//     // Poisson(f64),
+// }
 
 // pub fn random_in_range(min: f64, max: f64) -> f64 {
 //     rand::random::<f64>() * (max - min) + min
@@ -56,6 +62,33 @@ pub fn dot_product(v1: &[f64], v2: &[f64]) -> Result<f64, DotProductError> {
     }
 
     Ok(sum)
+}
+
+pub fn column_vec_of_random_values(min: f64, max: f64, size: usize) -> Matrix {
+    let mut rng = rand::thread_rng();
+
+    let mut values = Vec::new();
+    for _ in 0..size {
+        let x = rng.gen_range(min..max);
+        values.push(x);
+    }
+    Matrix::new_column_vector(&values)
+}
+
+pub fn column_vec_of_random_values_from_distribution(
+    mean: f64,
+    std_dev: f64,
+    size: usize,
+) -> ColumnVector {
+    let mut rng = rand::thread_rng();
+    let normal = Normal::new(mean, std_dev).unwrap();
+
+    let mut res = ColumnVector::empty();
+    for _ in 0..size {
+        let x = normal.sample(&mut rng);
+        res.push(x);
+    }
+    res
 }
 
 #[cfg(test)]

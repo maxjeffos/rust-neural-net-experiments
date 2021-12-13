@@ -1,44 +1,6 @@
 use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
-use common::{column_vector, column_vector_matrix};
-
-use rand::distributions::{Distribution, Standard, Uniform};
-use rand::Rng;
-use rand_distr::Normal;
-
-fn sigmoid(z: f64) -> f64 {
-    1.0 / (1.0 + (-z).exp())
-}
-
-fn sigmoid_vector(v: &ColumnVector) -> ColumnVector {
-    if v.num_elements() == 0 {
-        panic!("this function is only valid for column vectors with at least one element (row)")
-    }
-
-    let mut res = ColumnVector::empty();
-    for i in 0..v.num_elements() {
-        res.push(sigmoid(v.get(i)))
-    }
-    res
-}
-
-/// Compute the derivative of the sigmoid function at the given z
-fn sigmoid_prime(z: f64) -> f64 {
-    sigmoid(z) * (1.0 - sigmoid(z))
-}
-
-fn sigmoid_prime_vector(v: &ColumnVector) -> ColumnVector {
-    if v.num_elements() == 0 {
-        panic!("this function is only valid for column vectors with at least one element (row)")
-    }
-
-    let mut res = v.clone();
-
-    for i in 0..res.num_elements() {
-        res.set(i, sigmoid_prime(v.get(i)));
-    }
-
-    res
-}
+use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
+use common::{column_vec_of_random_values_from_distribution, column_vector};
 
 fn z(
     weights_matrix: &Matrix,
@@ -71,12 +33,11 @@ impl SimpleNeuralNetwork {
                 column_vec_of_random_values_from_distribution(0.0, 1.0, sizes[i]);
             biases.push(biases_column_vector);
         }
-        println!("{:?}", biases);
 
         let mut weights = Vec::new();
 
         for l in 1..sizes.len() {
-            let mut weights_matrix = Matrix::new_matrix_with_random_values_from_normal_distribution(
+            let weights_matrix = Matrix::new_matrix_with_random_values_from_normal_distribution(
                 sizes[l],
                 sizes[l - 1],
                 0.0,
@@ -84,8 +45,6 @@ impl SimpleNeuralNetwork {
             );
             weights.push(weights_matrix);
         }
-
-        println!("{:?}", weights);
 
         Self {
             sizes,
@@ -100,20 +59,13 @@ impl SimpleNeuralNetwork {
 
     pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
         let mut activation_vector = input_activations.clone();
-        // println!("feed_forward - weights length: {}", self.weights.len());
-        // println!("feed_forward - biases length: {}", self.biases.len());
-
-        // println!("self.num_layers: {:?}", self.num_layers());
-        // println!("self.sizes: {:?}", self.sizes.len());
 
         for i_step in 0..self.num_layers() - 1 {
-            // println!("feed_forward step: {}", i_step);
             let z_vec = z(
                 &self.weights[i_step],
                 &activation_vector,
                 &self.biases[i_step],
             );
-            // println!("feed_forward - z_vec: {:?}", z_vec);
             activation_vector = sigmoid_vector(&z_vec);
         }
 
@@ -130,13 +82,7 @@ impl SimpleNeuralNetwork {
         input_activations: &ColumnVector,
     ) -> Vec<FeedForwardIntermediateValues> {
         let mut intermediates = Vec::new();
-
         let mut activation_vector = input_activations.clone();
-        // println!("feed_forward - weights length: {}", self.weights.len());
-        // println!("feed_forward - biases length: {}", self.biases.len());
-
-        // println!("self.num_layers: {:?}", self.num_layers());
-        // println!("self.sizes: {:?}", self.sizes.len());
 
         for l in 0..self.num_layers() {
             // println!("feed_forward layer: {}", l);
@@ -226,10 +172,6 @@ impl SimpleNeuralNetwork {
         error_vector_for_plus_one_layer: &ColumnVector,
         this_layer_z_vector: &ColumnVector,
     ) -> ColumnVector {
-        // println!("in error_any_layer_but_last");
-        // println!("  - layer: {}", layer);
-        // println!("  - weights.length(): {}", self.weights.len());
-
         // there's once less weight matrix than layer since the input layer doesn't have a weight matrix.
         // so if we are on layer 2, weights[2] will be the weights for layer 3 (which is what we want in EQ 2)
         let weight_matrix = self.weights.get(layer).unwrap();
@@ -256,21 +198,12 @@ impl SimpleNeuralNetwork {
         let last_layer_index = self.num_layers() - 1;
 
         for l in (1..self.num_layers()).rev() {
-            // println!("l: {}", l);
             if l == last_layer_index {
                 let last_layer_z_values = &feedforward_intermediate_values.last().unwrap().z_vector;
                 let last_layer_activations_vector = &feedforward_intermediate_values
                     .last()
                     .unwrap()
                     .activations_vector;
-
-                // println!("last_layer_z_values:\n{}", last_layer_z_values);
-                // println!(
-                //     "last_layer_activations_vector:\n{}",
-                //     last_layer_activations_vector
-                // );
-
-                // println!("expected_outputs_vector:\n{}", expected_outputs_vector);
 
                 let layer_errors_vector = self.error_last_layer(
                     &last_layer_activations_vector,
@@ -280,7 +213,6 @@ impl SimpleNeuralNetwork {
 
                 error_vectors.push(layer_errors_vector);
             } else {
-                // println!("any other layer - l: {}", l);
                 // we're working backwards from the last layer to the input layer, but
                 // filling up the errors_vectors in reverse order (ex [0] is first, etc)
                 let error_vector_for_plus_one_layer = error_vectors.last().unwrap(); // this will get the most recently done layer, which will be the l+1 th layer
@@ -342,7 +274,6 @@ impl SimpleNeuralNetwork {
             for i_training_ex in 0..num_training_examples {
                 let error_vectors_for_this_training_example =
                     &error_vectors_for_each_training_example[i_training_ex];
-                // let error_vector_for_this_layer = &error_vectors_for_this_training_example[layer_index_in_errors_vec];
 
                 let intermediates_for_this_training_example =
                     &intermediates_for_each_training_example[i_training_ex];
@@ -350,7 +281,6 @@ impl SimpleNeuralNetwork {
                 let this_layer_errors_vector = error_vectors_for_this_training_example
                     .get(layer_index_in_errors_vec)
                     .unwrap();
-                // println!("\nthis_layer_errors_vector:\n{}", this_layer_errors_vector);
 
                 let previous_layer_activations_vector = &intermediates_for_this_training_example
                     .get(l - 1)
@@ -359,64 +289,28 @@ impl SimpleNeuralNetwork {
                 let previous_layer_activations_vector_transpose =
                     previous_layer_activations_vector.transpose();
 
-                // println!(
-                //     "\nprevious_layer_activations_vector:\n{}",
-                //     previous_layer_activations_vector
-                // );
-                // println!(
-                //     "\nprevious_layer_activations_vector_transpose:\n{}",
-                //     previous_layer_activations_vector_transpose
-                // );
-
-                // println!("\norig weights matrix:\n{}", &self.weights[l - 1]); // -1 because one less than num layers
-
                 let weights_grad = this_layer_errors_vector
                     .mult_matrix(&previous_layer_activations_vector_transpose);
-                // println!("\nweights_grad:\n{}", weights_grad);
-
-                // println!(
-                //     "\nweights_partials_vector_avg:\n{}",
-                //     weights_partials_matrix_avg
-                // );
 
                 weights_partials_matrix_avg.add_in_place(&weights_grad);
-
-                // now do the similar thing for the biases
                 bias_partials_vector_avg.plus_in_place(this_layer_errors_vector);
             }
 
-            weights_partials_matrix_avg.divide_by_scalar_in_place(num_training_examples as f64);
-            bias_partials_vector_avg.divide_by_scalar_in_place(num_training_examples as f64);
+            let learning_rate_over_num_training_examples =
+                learning_rate / (num_training_examples as f64);
 
-            weights_partials_matrix_avg.multiply_by_scalar_in_place(learning_rate);
-            bias_partials_vector_avg.multiply_by_scalar_in_place(learning_rate);
+            weights_partials_matrix_avg
+                .multiply_by_scalar_in_place(learning_rate_over_num_training_examples);
+            bias_partials_vector_avg
+                .multiply_by_scalar_in_place(learning_rate_over_num_training_examples);
 
-            // println!(
-            //     "\nweights_partials_vector_avg:\n{}",
-            //     weights_partials_matrix_avg
-            // );
-            // println!(
-            //     "\nbias_partials_vector_avg:\n{}",
-            //     bias_partials_vector_avg
-            // );
-
-            // update weights
-            // let old_weights_matrix = self.weights.get(l - 1).unwrap(); // -1 because one less than num layers
-            // let new_weights_matrix = old_weights_matrix
-            //     .minus(&weights_partials_matrix_avg.multiply_by_scalar(learning_rate));
-            // let old_biases_vector = self.biases.get(l - 1).unwrap(); // -1 because one less than num layers
-            // println!("\nold_weights_matrix:\n{}", old_weights_matrix);
-            // println!("\nold_biases_matrix:\n{}", old_biases_vector);
-
+            // -1 because one less than num layers
             let weights = self.weights.get_mut(l - 1).unwrap();
-            // weights.subtract_in_place(&weights_partials_matrix_avg.multiply_by_scalar(learning_rate));
             weights.subtract_in_place(&weights_partials_matrix_avg);
-            // println!("\nupdated weights matrix:\n{}", weights);
 
+            // -1 because one less than num layers
             let biases = self.biases.get_mut(l - 1).unwrap();
-            // biases.subtract_in_place(&bias_partials_vector_avg.multiply_by_scalar(learning_rate));
             biases.minus_in_place(&bias_partials_vector_avg);
-            // println!("\nupdated biases vector:\n{}", biases);
 
             layer_index_in_errors_vec += 1;
         }
@@ -480,83 +374,22 @@ struct FeedForwardIntermediateValues {
     activations_vector: ColumnVector,
 }
 
-fn column_vec_of_random_values(min: f64, max: f64, size: usize) -> Matrix {
-    let mut rng = rand::thread_rng();
-
-    let mut values = Vec::new();
-    for _ in 0..size {
-        let x = rng.gen_range(min..max);
-        values.push(x);
-    }
-    Matrix::new_column_vector(&values)
-}
-
-fn column_vec_of_random_values_from_distribution(
-    mean: f64,
-    std_dev: f64,
-    size: usize,
-) -> ColumnVector {
-    let mut rng = rand::thread_rng();
-    let normal = Normal::new(mean, std_dev).unwrap();
-
-    let mut res = ColumnVector::empty();
-    for _ in 0..size {
-        let x = normal.sample(&mut rng);
-        res.push(x);
-    }
-    res
-}
-
 fn main() {
-    println!("Hello, world!");
-    println!("sigmoid(0.85): {}", sigmoid(0.85));
-    println!("sigmoid(1.6): {}", sigmoid(1.6));
-
-    let v = column_vector![0.4, 0.7, 1.0, 1.3, 1.6];
-    let sv = sigmoid_prime_vector(&v);
-    println!("v: {:?}", sv);
-
-    let res = column_vector![
-        0.24026074574152914,
-        0.22171287329310904,
-        0.19661193324148185,
-        0.16829836246906024,
-        0.13976379193306102
-    ];
-
-    let weights_1 = RowsMatrixBuilder::new()
-        .with_row(&[0.5, 0.5, 0.5, 0.5, 0.5])
-        .with_row(&[0.6, 0.6, 0.6, 0.6, 0.6])
-        .build();
-
-    let biases_1 = column_vector![0.1, 0.1];
-
-    let step2z = weights_1.mult_vector(&res).plus(&biases_1);
-    println!("step2z: {:?}", step2z);
-    let sstepz = sigmoid_vector(&step2z);
-    println!("sstepz: \n{}", sstepz);
-
-    let num_neurons_layer_0 = 3;
-    let num_neurons_layer_1 = 2;
-
-    // Layer N: 3 neurons
-    // L N-1: 2 neurons
+    // 3x2 network
+    // single weights / biases
     // weights matrix -> 2x3
 
     let inputs = column_vector![0.0, 0.5, 1.0];
 
-    let mut weights = Matrix::new_zero_matrix(2, 3);
-    weights.set(0, 0, 0.5);
-    weights.set(0, 1, 0.5);
-    weights.set(0, 2, 0.5);
-    weights.set(1, 0, 1.0);
-    weights.set(1, 1, 1.0);
-    weights.set(1, 2, 1.0);
+    let weights = RowsMatrixBuilder::new()
+        .with_row(&[0.5, 0.5, 0.5])
+        .with_row(&[1.0, 1.0, 1.0])
+        .build();
 
     let biases = column_vector![0.1, 0.1];
 
     let nn = SimpleNeuralNetwork {
-        sizes: vec![num_neurons_layer_0, num_neurons_layer_1],
+        sizes: vec![3, 2],
         weights: vec![weights],
         biases: vec![biases],
     };
@@ -588,52 +421,7 @@ mod tests {
     use common::linalg::ColumnsMatrixBuilder;
     use common::scalar_valued_multivariable_point::ScalarValuedMultivariablePoint;
     use float_cmp::approx_eq;
-
-    #[test]
-    fn sigmoid_works() {
-        assert_eq!(sigmoid(-4.0), 0.01798620996209156);
-        assert_eq!(sigmoid(-2.0), 0.11920292202211755);
-        assert_eq!(sigmoid(-1.0), 0.2689414213699951);
-        assert_eq!(sigmoid(0.0), 0.5);
-        assert_eq!(sigmoid(1.0), 0.7310585786300049);
-        assert_eq!(sigmoid(2.0), 0.8807970779778823);
-        assert_eq!(sigmoid(4.0), 0.9820137900379085);
-    }
-
-    #[test]
-    fn sigmoid_vector_works() {
-        let m1 = column_vector![-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0];
-        let m2 = sigmoid_vector(&m1);
-        assert_eq!(m2.num_elements(), 7);
-        assert_eq!(m2.get(0), sigmoid(-4.0));
-        assert_eq!(m2.get(1), sigmoid(-2.0));
-        assert_eq!(m2.get(2), sigmoid(-1.0));
-        assert_eq!(m2.get(3), 0.5);
-        assert_eq!(m2.get(4), sigmoid(1.0));
-        assert_eq!(m2.get(5), sigmoid(2.0));
-        assert_eq!(m2.get(6), sigmoid(4.0));
-    }
-
-    #[test]
-    fn sigmoid_prime_works() {
-        assert_eq!(sigmoid_prime(-1.0), 0.19661193324148185);
-        assert_eq!(sigmoid_prime(-0.5), 0.2350037122015945);
-        assert_eq!(sigmoid_prime(0.0), 0.25);
-        assert_eq!(sigmoid_prime(0.5), 0.2350037122015945);
-        assert_eq!(sigmoid_prime(1.0), 0.19661193324148185);
-    }
-
-    #[test]
-    fn sigmoid_prime_vec_works() {
-        let v = ColumnVector::new(&[-1.0, -0.5, 0.0, 0.5, 1.0]);
-        let sig_vec = sigmoid_prime_vector(&v);
-        assert_eq!(sig_vec.num_elements(), 5);
-        assert_eq!(sig_vec.get(0), 0.19661193324148185);
-        assert_eq!(sig_vec.get(1), 0.2350037122015945);
-        assert_eq!(sig_vec.get(2), 0.25);
-        assert_eq!(sig_vec.get(3), 0.2350037122015945);
-        assert_eq!(sig_vec.get(4), 0.19661193324148185);
-    }
+    use time_test::time_test;
 
     pub fn get_simple_two_layer_nn_for_test() -> SimpleNeuralNetwork {
         let num_neurons_layer_0 = 3;
@@ -1087,6 +875,7 @@ mod tests {
 
     #[test]
     fn test_nn() {
+        time_test!();
         let training_data = get_data_set_1();
 
         // 2 x 3 x 1
@@ -1134,6 +923,131 @@ mod tests {
         let expected_outputs = expected_outputs.build();
 
         let epocs = 10000;
+        let learning_rate = 2.0;
+
+        nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
+
+        // predict
+        let prediction_input = column_vector![2.0, 2.0];
+        let expected_output = column_vector![1.0];
+        let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
+        println!("predicted_output_0: {}", &predicted_output_0);
+        let cost_of_predicted_0 =
+            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
+
+        // predict
+        println!("second prediction");
+        let prediction_input = column_vector![-2.0, -2.0];
+        let expected_output = column_vector![0.0];
+        let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
+        println!("predicted_output_1: {}", &predicted_output_1);
+        let cost_of_predicted_1 =
+            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
+
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+
+        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
+        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+    }
+
+    #[test]
+    fn test_nn_using_constructor_for_random_initial_weights_and_biases() {
+        time_test!();
+        // try the same data set as before but use the NN constructor to initialize with random weights/biases
+        let training_data = get_data_set_1();
+
+        // 2 x 3 x 1
+        let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
+
+        println!("initial weights:");
+        for w in nn.weights.iter() {
+            println!("{}", w);
+        }
+
+        println!("initial biases:");
+        for b in nn.biases.iter() {
+            println!("{}", b);
+        }
+
+        // need a matrix with rows = size of input x num data points
+        let mut training_inputs = ColumnsMatrixBuilder::new();
+        let mut expected_outputs = ColumnsMatrixBuilder::new();
+
+        for i_data in 0..training_data.len() {
+            training_inputs.push_column(&training_data[i_data].independant);
+            expected_outputs.push_column(&[training_data[i_data].dependant]);
+        }
+
+        let training_inputs = training_inputs.build();
+        let expected_outputs = expected_outputs.build();
+
+        let epocs = 5500;
+        let learning_rate = 2.0;
+
+        nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
+
+        // predict
+        let prediction_input = column_vector![2.0, 2.0];
+        let expected_output = column_vector![1.0];
+        let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
+        println!("predicted_output_0: {}", &predicted_output_0);
+        let cost_of_predicted_0 =
+            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
+
+        // predict
+        println!("second prediction");
+        let prediction_input = column_vector![-2.0, -2.0];
+        let expected_output = column_vector![0.0];
+        let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
+        println!("predicted_output_1: {}", &predicted_output_1);
+        let cost_of_predicted_1 =
+            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
+
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+
+        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
+        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+    }
+
+    #[test]
+    fn test_nn_using_more_hidden_layers_with_more_neurons() {
+        time_test!();
+
+        // try more layers and more neurons in the hidden layers to see if I can improve number of epocs
+        let training_data = get_data_set_1();
+
+        // 2 x 16 x 16 x 1
+        let mut nn = SimpleNeuralNetwork::new(vec![2, 16, 16, 1]);
+
+        println!("initial weights:");
+        for w in nn.weights.iter() {
+            println!("{}", w);
+        }
+
+        println!("initial biases:");
+        for b in nn.biases.iter() {
+            println!("{}", b);
+        }
+
+        // need a matrix with rows = size of input x num data points
+        let mut training_inputs = ColumnsMatrixBuilder::new();
+        let mut expected_outputs = ColumnsMatrixBuilder::new();
+
+        for i_data in 0..training_data.len() {
+            training_inputs.push_column(&training_data[i_data].independant);
+            expected_outputs.push_column(&[training_data[i_data].dependant]);
+        }
+
+        let training_inputs = training_inputs.build();
+        let expected_outputs = expected_outputs.build();
+
+        let epocs = 2500;
         let learning_rate = 2.0;
 
         nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
