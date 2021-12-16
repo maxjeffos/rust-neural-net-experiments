@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "common",
+  "metrics",
   "test1-autodiff",
   "test2-mlp-classifier",
   "test3-simple-linear-regression",
