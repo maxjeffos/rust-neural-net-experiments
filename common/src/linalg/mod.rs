@@ -2,6 +2,8 @@ use rand::distributions::{Distribution, Standard, Uniform};
 use rand::Rng;
 use rand_distr::Normal;
 use std::fmt;
+use std::ops::Deref;
+use std::ops::DerefMut;
 
 #[macro_export]
 macro_rules! column_vector_matrix {
@@ -580,9 +582,8 @@ impl ColumnVector {
 
     pub fn vec_length(&self) -> f64 {
         let mut sum = 0.0;
-        // TODO: improve after implementing Iterator on ColumnVector
-        for i in 0..self.num_elements() {
-            sum += self.get(i) * self.get(i);
+        for x in self.iter() {
+            sum += x * x;
         }
         sum.sqrt()
     }
@@ -642,6 +643,20 @@ impl fmt::Display for ColumnVector {
         // result.push_str("╰\n");
 
         write!(f, "{}", result)
+    }
+}
+
+impl Deref for ColumnVector {
+    type Target = Vec<f64>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner_matrix.data
+    }
+}
+
+impl DerefMut for ColumnVector {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner_matrix.data
     }
 }
 
@@ -1490,6 +1505,27 @@ mod column_vector_tests {
         assert_eq!(cv1.get(0), 1.0);
         assert_eq!(cv1.get(1), 4.0);
         assert_eq!(cv1.get(2), 9.0);
+    }
+
+    #[test]
+    fn test_can_iterate_over_column_vector() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let mut iter = cv.iter();
+        assert_eq!(iter.next(), Some(&1.0));
+        assert_eq!(iter.next(), Some(&2.0));
+        assert_eq!(iter.next(), Some(&3.0));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_can_iterate_mutably_over_column_vector() {
+        let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        for i in cv.iter_mut() {
+            *i += 1.0;
+        }
+        assert_eq!(cv.get(0), 2.0);
+        assert_eq!(cv.get(1), 3.0);
+        assert_eq!(cv.get(2), 4.0);
     }
 
     #[test]
