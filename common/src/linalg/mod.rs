@@ -5,6 +5,10 @@ use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
+fn square_ref(x: &f64) -> f64 {
+    x * x
+}
+
 #[macro_export]
 macro_rules! column_vector_matrix {
     ($($y:expr),+) => (
@@ -124,8 +128,14 @@ impl Matrix {
             panic!("columns must have at least one column");
         }
 
-        let columns_lengths = columns.iter().map(|v| v.len()).collect::<Vec<usize>>();
-        if columns_lengths.iter().any(|&x| x != columns_lengths[0]) {
+        let columns_lengths = columns
+            .iter()
+            .map(|v| v.len())
+            .collect::<Vec<usize>>();
+        if columns_lengths
+            .iter()
+            .any(|&x| x != columns_lengths[0])
+        {
             panic!("columns must have the same length");
         }
 
@@ -183,30 +193,36 @@ impl Matrix {
         Self {
             num_rows: self.num_rows,
             num_columns: self.num_columns,
-            data: self.data.iter().map(|x| x * scalar).collect(),
+            data: self
+                .data
+                .iter()
+                .map(|x| x * scalar)
+                .collect(),
         }
     }
 
     pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
-        for i in 0..self.data.len() {
-            let val_in_self = self.data.get_mut(i).unwrap();
-            *val_in_self = *val_in_self * scalar;
-        }
+        self.data
+            .iter_mut()
+            .for_each(|x| *x *= scalar);
     }
 
     pub fn divide_by_scalar(&self, scalar: f64) -> Self {
         Self {
             num_rows: self.num_rows,
             num_columns: self.num_columns,
-            data: self.data.iter().map(|x| x / scalar).collect(),
+            data: self
+                .data
+                .iter()
+                .map(|x| x / scalar)
+                .collect(),
         }
     }
 
     pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
-        for i in 0..self.data.len() {
-            let val_in_self = self.data.get_mut(i).unwrap();
-            *val_in_self = *val_in_self / scalar;
-        }
+        self.data
+            .iter_mut()
+            .for_each(|x| *x /= scalar);
     }
 
     pub fn multiply(&self, other: &Self) -> Self {
@@ -246,10 +262,12 @@ impl Matrix {
             panic!("Matrix dimensions are not compatible for hadamard product (element-wise multiplication). Both matricies must be the same dimensions.");
         }
 
-        let mut data = Vec::new();
-        for i in 0..self.data.len() {
-            data.push(self.data[i] * other.data[i]);
-        }
+        let data = self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(x, y)| x * y)
+            .collect();
 
         Self {
             num_rows: self.num_rows,
@@ -435,6 +453,27 @@ pub struct ColumnVector {
     inner_matrix: Matrix,
 }
 
+pub struct IterWith<'a> {
+    v_0_values: &'a Vec<f64>,
+    v_1_values: &'a Vec<f64>,
+    index: usize,
+}
+
+impl<'a> Iterator for IterWith<'a> {
+    type Item = (f64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.v_0_values.len() {
+            let x_0 = self.v_0_values[self.index];
+            let x_1 = self.v_1_values[self.index];
+            self.index += 1;
+            Some((x_0, x_1))
+        } else {
+            None
+        }
+    }
+}
+
 impl ColumnVector {
     pub fn new(data: &[f64]) -> ColumnVector {
         ColumnVector {
@@ -474,6 +513,18 @@ impl ColumnVector {
         self.inner_matrix.set(row_index, 0, value);
     }
 
+    pub fn iter_with<'a>(&'a self, other: &'a ColumnVector) -> IterWith {
+        if self.inner_matrix.data.len() != other.inner_matrix.data.len() {
+            panic!("self and other must have the same length");
+        }
+
+        IterWith {
+            v_0_values: &self.inner_matrix.data,
+            v_1_values: &other.inner_matrix.data,
+            index: 0,
+        }
+    }
+
     pub fn plus(&self, other: &ColumnVector) -> ColumnVector {
         let mut data = Vec::new();
         for i in 0..self.num_elements() {
@@ -511,31 +562,38 @@ impl ColumnVector {
     }
 
     pub fn multiply_by_scalar(&self, scalar: f64) -> ColumnVector {
-        let mut data = Vec::new();
-        self.inner_matrix.data.iter().for_each(|x| {
-            data.push(*x * scalar);
-        });
+        let data = self
+            .inner_matrix
+            .data
+            .iter()
+            .map(|x| *x * scalar)
+            .collect::<Vec<f64>>();
         ColumnVector::new(&data)
     }
 
     pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
-        // trying out another syntax for this - using for_each
-        self.inner_matrix.data.iter_mut().for_each(|x| *x *= scalar);
+        self.inner_matrix
+            .data
+            .iter_mut()
+            .for_each(|x| *x *= scalar);
     }
 
     pub fn divide_by_scalar(&self, scalar: f64) -> ColumnVector {
-        let mut data = Vec::new();
-        self.inner_matrix.data.iter().for_each(|x| {
-            data.push(*x / scalar);
-        });
+        let data = self
+            .inner_matrix
+            .data
+            .iter()
+            .map(|x| *x / scalar)
+            .collect::<Vec<f64>>();
+
         ColumnVector::new(&data)
     }
 
     pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
-        // trying out another syntax for this - using a more normal for in loop
-        for x in self.inner_matrix.data.iter_mut() {
-            *x /= scalar;
-        }
+        self.inner_matrix
+            .data
+            .iter_mut()
+            .for_each(|x| *x /= scalar);
     }
 
     pub fn mult_matrix(&self, other: &Matrix) -> Matrix {
@@ -552,8 +610,8 @@ impl ColumnVector {
         }
 
         let mut sum = 0.0;
-        for i in 0..self.num_elements() {
-            sum += self.get(i) * other.get(i);
+        for (x, y) in self.iter_with(other) {
+            sum += x * y;
         }
         sum
     }
@@ -564,8 +622,8 @@ impl ColumnVector {
         }
 
         let mut data = Vec::new();
-        for i in 0..self.num_elements() {
-            data.push(self.get(i) * other.get(i));
+        for (x, y) in self.iter_with(other) {
+            data.push(x * y);
         }
         ColumnVector::new(&data)
     }
@@ -581,11 +639,10 @@ impl ColumnVector {
     }
 
     pub fn vec_length(&self) -> f64 {
-        let mut sum = 0.0;
-        for x in self.iter() {
-            sum += x * x;
-        }
-        sum.sqrt()
+        self.iter()
+            .map(square_ref)
+            .sum::<f64>()
+            .sqrt()
     }
 
     pub fn push(&mut self, value: f64) {
@@ -978,9 +1035,13 @@ mod tests {
         assert_eq!(v_out.get(0, 0), 3.0);
         assert_eq!(v_out.get(0, 1), 2.0);
 
-        let m1 = ColumnsMatrixBuilder::new().with_column(&[1.0, 2.0]).build();
+        let m1 = ColumnsMatrixBuilder::new()
+            .with_column(&[1.0, 2.0])
+            .build();
 
-        let m2 = RowsMatrixBuilder::new().with_row(&[3.0, 4.0]).build();
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[3.0, 4.0])
+            .build();
 
         let m = m1.multiply(&m2);
         println!("m: \n{}", m);
@@ -1463,7 +1524,9 @@ mod column_vector_tests {
         // TODO: add test case for incompatible dimensions
 
         let v = column_vector![1.0, 2.0];
-        let m2 = RowsMatrixBuilder::new().with_row(&[3.0, 4.0]).build();
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[3.0, 4.0])
+            .build();
 
         let m = v.mult_matrix(&m2);
         println!("m: \n{}", m);
@@ -1526,6 +1589,19 @@ mod column_vector_tests {
         assert_eq!(cv.get(0), 2.0);
         assert_eq!(cv.get(1), 3.0);
         assert_eq!(cv.get(2), 4.0);
+    }
+
+    #[test]
+    fn test_can_do_double_iterate_over_column_vectors() {
+        // TODO: add test case for incompatible dimensions
+
+        let v0 = column_vector![1.0, 2.0, 3.0];
+        let v1 = column_vector![4.0, 5.0, 6.0];
+        let mut iter = v0.iter_with(&v1);
+        assert_eq!(iter.next(), Some((1.0, 4.0)));
+        assert_eq!(iter.next(), Some((2.0, 5.0)));
+        assert_eq!(iter.next(), Some((3.0, 6.0)));
+        assert_eq!(iter.next(), None);
     }
 
     #[test]

@@ -114,8 +114,14 @@ impl Matrix {
             panic!("columns must have at least one column");
         }
 
-        let columns_lengths = columns.iter().map(|v| v.len()).collect::<Vec<usize>>();
-        if columns_lengths.iter().any(|&x| x != columns_lengths[0]) {
+        let columns_lengths = columns
+            .iter()
+            .map(|v| v.len())
+            .collect::<Vec<usize>>();
+        if columns_lengths
+            .iter()
+            .any(|&x| x != columns_lengths[0])
+        {
             panic!("columns must have the same length");
         }
 
@@ -173,7 +179,11 @@ impl Matrix {
         Self {
             rows: self.rows,
             columns: self.columns,
-            data: self.data.iter().map(|x| x * scalar).collect(),
+            data: self
+                .data
+                .iter()
+                .map(|x| x * scalar)
+                .collect(),
         }
     }
 
@@ -188,7 +198,11 @@ impl Matrix {
         Self {
             rows: self.rows,
             columns: self.columns,
-            data: self.data.iter().map(|x| x / scalar).collect(),
+            data: self
+                .data
+                .iter()
+                .map(|x| x / scalar)
+                .collect(),
         }
     }
 
@@ -709,9 +723,13 @@ mod tests {
         assert_eq!(v_out.get(0, 0), 3.0);
         assert_eq!(v_out.get(0, 1), 2.0);
 
-        let m1 = ColumnsMatrixBuilder::new().with_column(&[1.0, 2.0]).build();
+        let m1 = ColumnsMatrixBuilder::new()
+            .with_column(&[1.0, 2.0])
+            .build();
 
-        let m2 = RowsMatrixBuilder::new().with_row(&[3.0, 4.0]).build();
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[3.0, 4.0])
+            .build();
 
         let m = m1.multiply(&m2);
         println!("m: \n{}", m);
