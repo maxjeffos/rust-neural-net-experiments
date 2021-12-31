@@ -220,19 +220,15 @@ impl SimpleNeuralNetwork {
 
         for l in (1..self.num_layers()).rev() {
             if l == last_layer_index {
-                let last_layer_z_values = &feedforward_intermediate_values.last().unwrap().z_vector;
-                let last_layer_activations_vector = &feedforward_intermediate_values
+                let z_v = &feedforward_intermediate_values.last().unwrap().z_vector;
+                let activations_v = &feedforward_intermediate_values
                     .last()
                     .unwrap()
                     .activations_vector;
 
-                let layer_errors_vector = self.error_last_layer(
-                    &last_layer_activations_vector,
-                    expected_outputs_vector,
-                    &last_layer_z_values,
-                );
+                let err_v = self.error_last_layer(&activations_v, expected_outputs_vector, &z_v);
 
-                error_vectors.push(layer_errors_vector);
+                error_vectors.push(err_v);
             } else {
                 // we're working backwards from the last layer to the input layer, but
                 // filling up the errors_vectors in reverse order (ex [0] is first, etc)
@@ -242,16 +238,10 @@ impl SimpleNeuralNetwork {
                 // we can't get the z vector for the input layer, because their are no weights/biases associated to it...
                 // turns out we don't do it... we only do this down to layer 2 - see http://neuralnetworksanddeeplearning.com/chap2.html#the_backpropagation_algorithm
 
-                let this_layer_z_vector = &feedforward_intermediate_values.get(l).unwrap().z_vector;
+                let z_v = &feedforward_intermediate_values[l].z_vector;
 
-                // println!("this_layer_z_vector:\n{}", this_layer_z_vector);
-
-                let this_layer_errors_vector = self.error_any_layer_but_last(
-                    l,
-                    error_vector_for_plus_one_layer,
-                    this_layer_z_vector,
-                );
-                error_vectors.push(this_layer_errors_vector);
+                let err_v = self.error_any_layer_but_last(l, error_vector_for_plus_one_layer, z_v);
+                error_vectors.push(err_v);
             }
         }
 
