@@ -1,3 +1,4 @@
+use common::linalg::square;
 use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
 use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
 use common::{column_vec_of_random_values_from_distribution, column_vector};
@@ -22,6 +23,22 @@ pub struct SimpleNeuralNetwork {
     // A vec of ColumnVectors - one for inter-layer step.
     // Each vector will have length equal to the number of neurons in the next layer.
     biases: Vec<ColumnVector>,
+}
+
+// Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
+// Neilson does the divide by 2
+// I'm doing the divide by 2
+fn quadratic_cost(expected: &ColumnVector, actual: &ColumnVector) -> f64 {
+    if expected.num_elements() != actual.num_elements() {
+        panic!("expected and actual outputs must have the same length");
+    }
+
+    expected
+        .iter_with(actual)
+        .map(|(exp, act)| exp - act)
+        .map(square)
+        .sum::<f64>()
+        / 2.0
 }
 
 impl SimpleNeuralNetwork {
@@ -112,21 +129,24 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    // here it would be nice to be able to type the inputs and outputs as Vector (column vector type Matrix as opposed to just any Matrix)
     pub fn cost_for_single_training_example(
         &self,
         inputs: &ColumnVector,
         expected_outputs: &ColumnVector,
     ) -> f64 {
+        if inputs.num_elements() != self.sizes[0] {
+            panic!(
+                "inputs must have the same number of elements as the number of neurons in the input layer"
+            );
+        }
+
         let outputs = self.feed_forward(&inputs);
 
-        let diff_vec = expected_outputs.minus(&outputs);
-        let length_of_diff_vector = diff_vec.vec_length();
-        let square_of_length_of_diff = length_of_diff_vector * length_of_diff_vector;
+        if outputs.num_elements() != expected_outputs.num_elements() {
+            panic!("outputs and expected_outputs must have the same length");
+        }
 
-        // Note that 3B1B does not do the divide by zero and he ends up with a 2 in the derivitive function.
-        // I'm doing the divide by 2
-        square_of_length_of_diff / 2.0
+        quadratic_cost(expected_outputs, &outputs)
     }
 
     /// Computes the cost of the neural network across the entire setup `all_inputs` and `expected_outputs`.
@@ -152,7 +172,8 @@ impl SimpleNeuralNetwork {
         cost / (all_inputs.num_columns() as f64)
     }
 
-    // Backprop Equation 1 from the Neilson book
+    // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
+    // from the Neilson book
     fn error_last_layer(
         &self,
         output_activations_vector: &ColumnVector,
@@ -165,7 +186,7 @@ impl SimpleNeuralNetwork {
         part1
     }
 
-    // Backprop Equation 2 from the Neilson book
+    // Backprop Equation BP2 from the Neilson book
     fn error_any_layer_but_last(
         &self,
         layer: usize,
@@ -708,6 +729,19 @@ mod tests {
     }
 
     #[test]
+    pub fn test_quadratic_cost_fn() {
+        let inputs = column_vector![0.0, 0.5, 1.0];
+        let targets = column_vector![0.0, 0.5, 1.0];
+        let cost = quadratic_cost(&inputs, &targets);
+        assert_eq!(cost, 0.0);
+
+        let inputs = column_vector![4.0, 4.0];
+        let targets = column_vector![2.0, 2.0];
+        let cost = quadratic_cost(&inputs, &targets);
+        assert_eq!(cost, 4.0);
+    }
+
+    #[test]
     pub fn test_cost_for_single_training_example_single_output_neuron() {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
@@ -720,14 +754,13 @@ mod tests {
         // manually compute the expected cost for the single neuron in the last layer
         let a_output = nn.feed_forward(&input_example);
         let a_output_value = a_output.into_value();
-        let diff = 3.0 - a_output_value;
-        let diff_squared = diff * diff;
-        let over_two = diff_squared / 2.0;
+
+        let manual_cost = (3.0 - a_output_value).powi(2) / 2.0;
 
         println!("a_output: \n{}", a_output_value);
-        println!("over_two: \n{}", over_two);
+        println!("manual_cost: \n{}", manual_cost);
 
-        assert_eq!(c0, over_two);
+        assert_eq!(c0, manual_cost);
     }
 
     #[test]
@@ -740,6 +773,8 @@ mod tests {
         let c0 = nn.cost_for_single_training_example(&input_example, &expected_output_vector);
 
         // manually compute the expected cost for the single neuron in the last layer
+        // this uses a different method to compute the cost, but it is mathematically equivalent to that used
+        // in cost_for_single_training_example
         let actual_output_vector = nn.feed_forward(&input_example);
         let diff_vec = expected_output_vector.minus(&actual_output_vector);
         let length_of_diff_vector = diff_vec.vec_length();

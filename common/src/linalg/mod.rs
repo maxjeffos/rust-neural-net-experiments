@@ -5,7 +5,11 @@ use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
-fn square_ref(x: &f64) -> f64 {
+pub fn square_ref(x: &f64) -> f64 {
+    x * x
+}
+
+pub fn square(x: f64) -> f64 {
     x * x
 }
 
