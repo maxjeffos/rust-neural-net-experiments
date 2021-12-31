@@ -1019,8 +1019,8 @@ mod tests {
         let training_inputs = training_inputs.build();
         let expected_outputs = expected_outputs.build();
 
-        let epocs = 5500;
-        let learning_rate = 2.0;
+        let epocs = 7000;
+        let learning_rate = 4.0;
 
         nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
 
@@ -1043,8 +1043,8 @@ mod tests {
             nn.cost_for_single_training_example(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
-        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
-        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.025));
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
