@@ -1,3 +1,4 @@
+use common::linalg::square;
 use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
 use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
 use common::{column_vec_of_random_values_from_distribution, column_vector};
@@ -22,6 +23,22 @@ pub struct SimpleNeuralNetwork {
     // A vec of ColumnVectors - one for inter-layer step.
     // Each vector will have length equal to the number of neurons in the next layer.
     biases: Vec<ColumnVector>,
+}
+
+// Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
+// Neilson does the divide by 2
+// I'm doing the divide by 2
+fn quadratic_cost(expected: &ColumnVector, actual: &ColumnVector) -> f64 {
+    if expected.num_elements() != actual.num_elements() {
+        panic!("expected and actual outputs must have the same length");
+    }
+
+    expected
+        .iter_with(actual)
+        .map(|(exp, act)| exp - act)
+        .map(square)
+        .sum::<f64>()
+        / 2.0
 }
 
 impl SimpleNeuralNetwork {
@@ -112,21 +129,24 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    // here it would be nice to be able to type the inputs and outputs as Vector (column vector type Matrix as opposed to just any Matrix)
     pub fn cost_for_single_training_example(
         &self,
         inputs: &ColumnVector,
         expected_outputs: &ColumnVector,
     ) -> f64 {
+        if inputs.num_elements() != self.sizes[0] {
+            panic!(
+                "inputs must have the same number of elements as the number of neurons in the input layer"
+            );
+        }
+
         let outputs = self.feed_forward(&inputs);
 
-        let diff_vec = expected_outputs.minus(&outputs);
-        let length_of_diff_vector = diff_vec.vec_length();
-        let square_of_length_of_diff = length_of_diff_vector * length_of_diff_vector;
+        if outputs.num_elements() != expected_outputs.num_elements() {
+            panic!("outputs and expected_outputs must have the same length");
+        }
 
-        // Note that 3B1B does not do the divide by zero and he ends up with a 2 in the derivitive function.
-        // I'm doing the divide by 2
-        square_of_length_of_diff / 2.0
+        quadratic_cost(expected_outputs, &outputs)
     }
 
     /// Computes the cost of the neural network across the entire setup `all_inputs` and `expected_outputs`.
@@ -152,7 +172,8 @@ impl SimpleNeuralNetwork {
         cost / (all_inputs.num_columns() as f64)
     }
 
-    // Backprop Equation 1 from the Neilson book
+    // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
+    // from the Neilson book
     fn error_last_layer(
         &self,
         output_activations_vector: &ColumnVector,
@@ -165,7 +186,7 @@ impl SimpleNeuralNetwork {
         part1
     }
 
-    // Backprop Equation 2 from the Neilson book
+    // Backprop Equation BP2 from the Neilson book
     fn error_any_layer_but_last(
         &self,
         layer: usize,
@@ -199,19 +220,15 @@ impl SimpleNeuralNetwork {
 
         for l in (1..self.num_layers()).rev() {
             if l == last_layer_index {
-                let last_layer_z_values = &feedforward_intermediate_values.last().unwrap().z_vector;
-                let last_layer_activations_vector = &feedforward_intermediate_values
+                let z_v = &feedforward_intermediate_values.last().unwrap().z_vector;
+                let activations_v = &feedforward_intermediate_values
                     .last()
                     .unwrap()
                     .activations_vector;
 
-                let layer_errors_vector = self.error_last_layer(
-                    &last_layer_activations_vector,
-                    expected_outputs_vector,
-                    &last_layer_z_values,
-                );
+                let err_v = self.error_last_layer(&activations_v, expected_outputs_vector, &z_v);
 
-                error_vectors.push(layer_errors_vector);
+                error_vectors.push(err_v);
             } else {
                 // we're working backwards from the last layer to the input layer, but
                 // filling up the errors_vectors in reverse order (ex [0] is first, etc)
@@ -221,16 +238,10 @@ impl SimpleNeuralNetwork {
                 // we can't get the z vector for the input layer, because their are no weights/biases associated to it...
                 // turns out we don't do it... we only do this down to layer 2 - see http://neuralnetworksanddeeplearning.com/chap2.html#the_backpropagation_algorithm
 
-                let this_layer_z_vector = &feedforward_intermediate_values.get(l).unwrap().z_vector;
+                let z_v = &feedforward_intermediate_values[l].z_vector;
 
-                // println!("this_layer_z_vector:\n{}", this_layer_z_vector);
-
-                let this_layer_errors_vector = self.error_any_layer_but_last(
-                    l,
-                    error_vector_for_plus_one_layer,
-                    this_layer_z_vector,
-                );
-                error_vectors.push(this_layer_errors_vector);
+                let err_v = self.error_any_layer_but_last(l, error_vector_for_plus_one_layer, z_v);
+                error_vectors.push(err_v);
             }
         }
 
@@ -708,6 +719,19 @@ mod tests {
     }
 
     #[test]
+    pub fn test_quadratic_cost_fn() {
+        let inputs = column_vector![0.0, 0.5, 1.0];
+        let targets = column_vector![0.0, 0.5, 1.0];
+        let cost = quadratic_cost(&inputs, &targets);
+        assert_eq!(cost, 0.0);
+
+        let inputs = column_vector![4.0, 4.0];
+        let targets = column_vector![2.0, 2.0];
+        let cost = quadratic_cost(&inputs, &targets);
+        assert_eq!(cost, 4.0);
+    }
+
+    #[test]
     pub fn test_cost_for_single_training_example_single_output_neuron() {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
@@ -720,14 +744,13 @@ mod tests {
         // manually compute the expected cost for the single neuron in the last layer
         let a_output = nn.feed_forward(&input_example);
         let a_output_value = a_output.into_value();
-        let diff = 3.0 - a_output_value;
-        let diff_squared = diff * diff;
-        let over_two = diff_squared / 2.0;
+
+        let manual_cost = (3.0 - a_output_value).powi(2) / 2.0;
 
         println!("a_output: \n{}", a_output_value);
-        println!("over_two: \n{}", over_two);
+        println!("manual_cost: \n{}", manual_cost);
 
-        assert_eq!(c0, over_two);
+        assert_eq!(c0, manual_cost);
     }
 
     #[test]
@@ -740,6 +763,8 @@ mod tests {
         let c0 = nn.cost_for_single_training_example(&input_example, &expected_output_vector);
 
         // manually compute the expected cost for the single neuron in the last layer
+        // this uses a different method to compute the cost, but it is mathematically equivalent to that used
+        // in cost_for_single_training_example
         let actual_output_vector = nn.feed_forward(&input_example);
         let diff_vec = expected_output_vector.minus(&actual_output_vector);
         let length_of_diff_vector = diff_vec.vec_length();
@@ -984,8 +1009,8 @@ mod tests {
         let training_inputs = training_inputs.build();
         let expected_outputs = expected_outputs.build();
 
-        let epocs = 5500;
-        let learning_rate = 2.0;
+        let epocs = 7000;
+        let learning_rate = 4.0;
 
         nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
 
@@ -1008,8 +1033,8 @@ mod tests {
             nn.cost_for_single_training_example(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
-        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
-        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.025));
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
