@@ -355,7 +355,7 @@ impl Matrix {
     }
 
     // TODO there's probably a better way to impelement this
-    pub fn extract_column_vector(&self, column_index: usize) -> Matrix {
+    pub fn extract_column(&self, column_index: usize) -> Matrix {
         if column_index >= self.columns {
             panic!("column_index must be less than the number of columns");
         }
@@ -892,28 +892,28 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_column_vector() {
+    fn test_extract_column() {
         let m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])
             .with_row(&[7.0, 8.0, 9.0])
             .build();
 
-        let v0 = m.extract_column_vector(0);
+        let v0 = m.extract_column(0);
         assert_eq!(v0.rows, 3);
         assert_eq!(v0.columns, 1);
         assert_eq!(v0.get(0, 0), 1.0);
         assert_eq!(v0.get(1, 0), 4.0);
         assert_eq!(v0.get(2, 0), 7.0);
 
-        let v1 = m.extract_column_vector(1);
+        let v1 = m.extract_column(1);
         assert_eq!(v1.rows, 3);
         assert_eq!(v1.columns, 1);
         assert_eq!(v1.get(0, 0), 2.0);
         assert_eq!(v1.get(1, 0), 5.0);
         assert_eq!(v1.get(2, 0), 8.0);
 
-        let v2 = m.extract_column_vector(2);
+        let v2 = m.extract_column(2);
         assert_eq!(v2.rows, 3);
         assert_eq!(v2.columns, 1);
         assert_eq!(v2.get(0, 0), 3.0);
