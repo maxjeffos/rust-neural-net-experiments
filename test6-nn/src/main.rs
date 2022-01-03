@@ -1,7 +1,31 @@
+use std::collections::HashMap;
+
 use common::linalg::square;
 use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
 use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
 use common::{column_vec_of_random_values_from_distribution, column_vector};
+
+type LayerIndex = usize;
+
+#[derive(Debug)]
+pub struct TrainingDataPoint {
+    input_v: ColumnVector,
+    desired_output_v: ColumnVector,
+}
+
+impl TrainingDataPoint {
+    pub fn new(input_v: ColumnVector, desired_output_v: ColumnVector) -> Self {
+        Self {
+            input_v,
+            desired_output_v,
+        }
+    }
+}
+
+struct FeedForwardIntermediates {
+    z_vector: ColumnVector,
+    activations_vector: ColumnVector,
+}
 
 fn z(
     weights_matrix: &Matrix,
@@ -28,13 +52,13 @@ pub struct SimpleNeuralNetwork {
 // Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
 // Neilson does the divide by 2
 // I'm doing the divide by 2
-fn quadratic_cost(expected: &ColumnVector, actual: &ColumnVector) -> f64 {
-    if expected.num_elements() != actual.num_elements() {
+fn quadratic_cost(desired_v: &ColumnVector, actual_v: &ColumnVector) -> f64 {
+    if desired_v.num_elements() != actual_v.num_elements() {
         panic!("expected and actual outputs must have the same length");
     }
 
-    expected
-        .iter_with(actual)
+    desired_v
+        .iter_with(actual_v)
         .map(|(exp, act)| exp - act)
         .map(square)
         .sum::<f64>()
@@ -89,23 +113,22 @@ impl SimpleNeuralNetwork {
         activation_vector
     }
 
-    /// Feed forward capturing the intermediate z values and activation values.
+    /// Feed forward capturing the intermediate z vectors and activation vectors.
     /// # Arguments
     /// * `input_activations` - The input activations
     /// # Returns
     /// A Vec<FeedForwardIntermediateValues> - one for each layer other than the first (input) layer (simiar to weights and biases).
-    fn feed_forward_capturing_intermediates(
+    /// The output is full length - i.e. as many entries in the Vec as there are layers and in the same order as the layers.
+    fn feed_forward_capturing(
         &self,
         input_activations: &ColumnVector,
-    ) -> Vec<FeedForwardIntermediateValues> {
+    ) -> Vec<FeedForwardIntermediates> {
         let mut intermediates = Vec::new();
         let mut activation_vector = input_activations.clone();
 
         for l in 0..self.num_layers() {
-            // println!("feed_forward layer: {}", l);
-
             if l == 0 {
-                intermediates.push(FeedForwardIntermediateValues {
+                intermediates.push(FeedForwardIntermediates {
                     // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
                     z_vector: ColumnVector::fill_new(f64::NAN, activation_vector.num_elements()),
                     activations_vector: activation_vector.clone(),
@@ -116,10 +139,9 @@ impl SimpleNeuralNetwork {
                     &activation_vector,
                     &self.biases[l - 1],
                 );
-                // println!("feed_forward - z_vec: {:?}", z_vec);
                 activation_vector = sigmoid_vector(&z_vec);
 
-                intermediates.push(FeedForwardIntermediateValues {
+                intermediates.push(FeedForwardIntermediates {
                     z_vector: z_vec.clone(),
                     activations_vector: activation_vector.clone(),
                 });
@@ -129,52 +151,37 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    pub fn cost_for_single_training_example(
+    pub fn cost_single_tr_ex(
         &self,
-        inputs: &ColumnVector,
-        expected_outputs: &ColumnVector,
+        input_v: &ColumnVector,
+        desired_output_v: &ColumnVector,
     ) -> f64 {
-        if inputs.num_elements() != self.sizes[0] {
+        if input_v.num_elements() != self.sizes[0] {
             panic!(
-                "inputs must have the same number of elements as the number of neurons in the input layer"
+                "input_v must have the same number of elements as the number of neurons in the input layer"
             );
         }
 
-        let outputs = self.feed_forward(&inputs);
+        let outputs = self.feed_forward(&input_v);
 
-        if outputs.num_elements() != expected_outputs.num_elements() {
-            panic!("outputs and expected_outputs must have the same length");
+        if outputs.num_elements() != desired_output_v.num_elements() {
+            panic!("input_v and desired_output_v must have the same length");
         }
 
-        quadratic_cost(expected_outputs, &outputs)
+        quadratic_cost(desired_output_v, &outputs)
     }
 
-    /// Computes the cost of the neural network across the entire setup `all_inputs` and `expected_outputs`.
-    /// Both `all_inputs` and `expected_outputs` should be matricies consisting of one column vector per input / expected output.
-    /// So the number of rows in `all_inputs` should equal the number of neurons in the input layer
-    /// and the number of rows in the `expected_outputs` should be the number of neurons in the output layer.
-    /// The number of columns in both `all_inputs` and `all_outputs` should both match and equal the number of training examples.
-    pub fn cost_for_training_set_iterative_impl(
-        &self,
-        all_inputs: &Matrix,
-        expected_outputs: &Matrix,
-    ) -> f64 {
-        let mut cost = 0.0;
-        for i_column in 0..all_inputs.num_columns() {
-            let next_input_vector = all_inputs.extract_column_vector(i_column);
-            let next_desired_output_vector = expected_outputs.extract_column_vector(i_column);
-
-            let next_cost = self
-                .cost_for_single_training_example(&next_input_vector, &next_desired_output_vector);
-            cost += next_cost;
-        }
-
-        cost / (all_inputs.num_columns() as f64)
+    pub fn cost_training_set(&self, training_data: &Vec<TrainingDataPoint>) -> f64 {
+        training_data
+            .iter()
+            .map(|tr_ex| self.cost_single_tr_ex(&tr_ex.input_v, &tr_ex.desired_output_v))
+            .sum::<f64>()
+            / training_data.len() as f64
     }
 
     // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
     // from the Neilson book
-    fn error_last_layer(
+    fn err_last_layer(
         &self,
         output_activations_vector: &ColumnVector,
         expected_outputs_vector: &ColumnVector,
@@ -187,7 +194,7 @@ impl SimpleNeuralNetwork {
     }
 
     // Backprop Equation BP2 from the Neilson book
-    fn error_any_layer_but_last(
+    fn err_non_last_layer(
         &self,
         layer: usize,
         error_vector_for_plus_one_layer: &ColumnVector,
@@ -207,182 +214,144 @@ impl SimpleNeuralNetwork {
 
     /// Returns a Vec of column vectors representing the errors at each neuron at each layer from L-1 to 1
     /// where layer L-1 is the output layer and layer 0 is the input layer.
-    fn backpropate_errors(
+    /// Because we are going backwards and because we're only doing down to laye 1, I'm using a HashMap to keep track of the error vectors
+    /// and the layers they correspond to to reduce confusion.
+    fn backprop(
         &self,
-        expected_outputs_vector: &ColumnVector,
-        feedforward_intermediate_values: &Vec<FeedForwardIntermediateValues>,
-    ) -> Vec<ColumnVector> {
+        desired_output_v: &ColumnVector,
+        intermediates: &Vec<FeedForwardIntermediates>,
+    ) -> HashMap<LayerIndex, ColumnVector> {
         // loop through the layers from back to front, and compute the error at each one.
         // Create a column vector representing the errors at each layer
-        let mut error_vectors = Vec::<ColumnVector>::new();
+
+        // the key of the map is the layer index
+        let mut error_vectors = HashMap::new();
 
         let last_layer_index = self.num_layers() - 1;
 
         for l in (1..self.num_layers()).rev() {
-            if l == last_layer_index {
-                let z_v = &feedforward_intermediate_values.last().unwrap().z_vector;
-                let activations_v = &feedforward_intermediate_values
-                    .last()
-                    .unwrap()
-                    .activations_vector;
+            let z_v = &intermediates[l].z_vector;
 
-                let err_v = self.error_last_layer(&activations_v, expected_outputs_vector, &z_v);
-
-                error_vectors.push(err_v);
+            let err_v = if l == last_layer_index {
+                let activations_v = &intermediates[last_layer_index].activations_vector;
+                self.err_last_layer(&activations_v, desired_output_v, &z_v)
             } else {
-                // we're working backwards from the last layer to the input layer, but
-                // filling up the errors_vectors in reverse order (ex [0] is first, etc)
-                let error_vector_for_plus_one_layer = error_vectors.last().unwrap(); // this will get the most recently done layer, which will be the l+1 th layer
+                let error_vector_for_plus_one_layer = error_vectors.get(&(l + 1)).unwrap();
+                self.err_non_last_layer(l, error_vector_for_plus_one_layer, z_v)
+            };
 
-                // we're going to need the z vector for the input layer, too, but how's that even possible?
-                // we can't get the z vector for the input layer, because their are no weights/biases associated to it...
-                // turns out we don't do it... we only do this down to layer 2 - see http://neuralnetworksanddeeplearning.com/chap2.html#the_backpropagation_algorithm
-
-                let z_v = &feedforward_intermediate_values[l].z_vector;
-
-                let err_v = self.error_any_layer_but_last(l, error_vector_for_plus_one_layer, z_v);
-                error_vectors.push(err_v);
-            }
+            error_vectors.insert(l, err_v);
         }
 
-        // println!("\nerrors_vectors");
-        // let mut layer = 2_usize;
-        // for ev in error_vectors.iter() {
-        //     println!("  - layer {}: \n{}", layer, ev);
-        //     println!("{}", ev);
-        //     layer -= 1;
-        // }
-
         error_vectors
-
-        // error_vectors is in order from L down to l+1 (i.e. the output layer down to the 1th layer (not the 0th layer)).
-        // depending on what comes next, we may or may not wat to reverse the order to keep things consistent with how we normally order things
     }
 
-    fn update_weights_and_biases(
+    fn compute_gradients(
         &mut self,
-        error_vectors_for_each_training_example: &Vec<Vec<ColumnVector>>,
-        intermediates_for_each_training_example: &Vec<Vec<FeedForwardIntermediateValues>>,
-        learning_rate: f64,
-    ) {
-        // error_vectors_for_each_training_example is like per training example, per layer, a column vector of errors per neuron
-
-        let num_training_examples = error_vectors_for_each_training_example.len();
-
-        // for layers L-1 down to 1, update the weights and biases
-
-        // the layers_index_in_errors_vec is in order from L to layer 0
-        let mut layer_index_in_errors_vec = 0; // L-1
+        per_tr_ex_data: Vec<(Vec<FeedForwardIntermediates>, HashMap<usize, ColumnVector>)>, // outer Vec is per training example; FeedForwardIntemediates is full-length per layers. Errors data is a map of layer index to error vector for that layer
+    ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
+        let mut gradients = HashMap::new();
+        let num_training_examples = per_tr_ex_data.len();
 
         for l in (1..self.num_layers()).rev() {
-            // println!("l: {}", l);
-
-            // let mut weights_partials_vector_avg = Matrix::new_column_vector(&vec![0.0; self.sizes[l]]);
             let mut weights_partials_matrix_avg =
                 Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
             let mut bias_partials_vector_avg = ColumnVector::new_zero_vector(self.sizes[l]);
 
-            for i_training_ex in 0..num_training_examples {
-                let error_vectors_for_this_training_example =
-                    &error_vectors_for_each_training_example[i_training_ex];
+            per_tr_ex_data
+                .iter()
+                .for_each(|(intermediates, error_vectors)| {
+                    let prev_layer_activations_v =
+                        &intermediates.get(l - 1).unwrap().activations_vector;
 
-                let intermediates_for_this_training_example =
-                    &intermediates_for_each_training_example[i_training_ex];
+                    let this_layer_err_v = error_vectors.get(&l).unwrap();
 
-                let this_layer_errors_vector = error_vectors_for_this_training_example
-                    .get(layer_index_in_errors_vec)
-                    .unwrap();
+                    let prev_layer_activations_v_transpose = prev_layer_activations_v.transpose();
 
-                let previous_layer_activations_vector = &intermediates_for_this_training_example
-                    .get(l - 1)
-                    .unwrap()
-                    .activations_vector;
-                let previous_layer_activations_vector_transpose =
-                    previous_layer_activations_vector.transpose();
+                    let weights_grad =
+                        this_layer_err_v.mult_matrix(&prev_layer_activations_v_transpose);
 
-                let weights_grad = this_layer_errors_vector
-                    .mult_matrix(&previous_layer_activations_vector_transpose);
+                    weights_partials_matrix_avg.add_in_place(&weights_grad);
+                    bias_partials_vector_avg.plus_in_place(this_layer_err_v);
+                });
 
-                weights_partials_matrix_avg.add_in_place(&weights_grad);
-                bias_partials_vector_avg.plus_in_place(this_layer_errors_vector);
-            }
+            weights_partials_matrix_avg.divide_by_scalar_in_place(num_training_examples as f64);
+            bias_partials_vector_avg.divide_by_scalar_in_place(num_training_examples as f64);
 
-            let learning_rate_over_num_training_examples =
-                learning_rate / (num_training_examples as f64);
-
-            weights_partials_matrix_avg
-                .multiply_by_scalar_in_place(learning_rate_over_num_training_examples);
-            bias_partials_vector_avg
-                .multiply_by_scalar_in_place(learning_rate_over_num_training_examples);
-
-            // -1 because one less than num layers
-            let weights = self.weights.get_mut(l - 1).unwrap();
-            weights.subtract_in_place(&weights_partials_matrix_avg);
-
-            // -1 because one less than num layers
-            let biases = self.biases.get_mut(l - 1).unwrap();
-            biases.minus_in_place(&bias_partials_vector_avg);
-
-            layer_index_in_errors_vec += 1;
+            gradients.insert(l, (weights_partials_matrix_avg, bias_partials_vector_avg));
         }
+
+        gradients
     }
 
+    // fn update_weights
     pub fn train(
         &mut self,
-        training_inputs: &Matrix,
-        expected_outputs: &Matrix,
+        training_data: &Vec<TrainingDataPoint>,
         epocs: usize,
         learning_rate: f64,
     ) {
-        if training_inputs.num_columns() != expected_outputs.num_columns() {
-            panic!("the number of training inputs must match the number of training outputs");
-        }
+        let initial_cost = self.cost_training_set(&training_data);
+        println!("initial cost across entire training set: {}", initial_cost);
 
-        let initial_cost =
-            self.cost_for_training_set_iterative_impl(&training_inputs, &expected_outputs);
+        // here's what this does:
+        // for epocs
+        //     for each training example
+        //         feed forward, capturing intermediates
+        //         backpropagate to compute errors at each neuron of each layer
+        //     compute gradients for w and b
+        //     update weights and biases
 
-        println!("initial cost across entire training set: {}", initial_cost,);
+        let mut epocs_count = 0;
 
-        for _ in 0..epocs {
-            let mut error_vectors_for_each_training_example = Vec::new();
-            let mut intermediates_for_each_training_example = Vec::new();
-
-            for i_training_example in 0..training_inputs.num_columns() {
-                let next_training_inputs_vector =
-                    training_inputs.extract_column_vector(i_training_example);
-                let next_training_expected_output_vector =
-                    expected_outputs.extract_column_vector(i_training_example);
-
-                let intermediates =
-                    self.feed_forward_capturing_intermediates(&next_training_inputs_vector);
-
-                let error_vectors_for_this_training_example =
-                    self.backpropate_errors(&next_training_expected_output_vector, &intermediates);
-
-                intermediates_for_each_training_example.push(intermediates);
-                error_vectors_for_each_training_example
-                    .push(error_vectors_for_this_training_example);
+        loop {
+            if epocs_count >= epocs {
+                println!("stopping after {} epocs", epocs_count);
+                break;
             }
 
-            self.update_weights_and_biases(
-                &error_vectors_for_each_training_example,
-                &intermediates_for_each_training_example,
-                learning_rate,
-            );
+            let mut per_tr_ex_data = Vec::new();
+
+            training_data.iter().for_each(|tr_ex| {
+                let intermediates = self.feed_forward_capturing(&tr_ex.input_v);
+                let errors = self.backprop(&tr_ex.desired_output_v, &intermediates);
+                per_tr_ex_data.push((intermediates, errors));
+            });
+
+            // note: compute_gradients takes data for ALL training examples
+            let mut gradients = self.compute_gradients(per_tr_ex_data);
+
+            // update weights and biases
+            // TODO: extract to method for easy testing
+
+            gradients
+                .iter_mut()
+                .for_each(|(layer_index, (weights_grad, bias_grad))| {
+                    let layer_index = *layer_index;
+
+                    weights_grad.multiply_by_scalar_in_place(learning_rate);
+                    bias_grad.multiply_by_scalar_in_place(learning_rate);
+
+                    let i_weights_and_biases = layer_index - 1; // -1 because one less than num layers. TODO: clean this up
+
+                    let weights = self.weights.get_mut(i_weights_and_biases).unwrap();
+                    let biases = self.biases.get_mut(i_weights_and_biases).unwrap();
+
+                    weights.subtract_in_place(&weights_grad);
+                    biases.minus_in_place(&bias_grad);
+                });
+
+            epocs_count += 1;
+
+            // TODO: stop on convergence
         }
 
-        let final_cost =
-            self.cost_for_training_set_iterative_impl(&training_inputs, &expected_outputs);
+        let final_cost = self.cost_training_set(&training_data);
         println!(
             "\ncost across entire training set after {} epocs: {}",
             epocs, final_cost,
         );
     }
-}
-
-struct FeedForwardIntermediateValues {
-    z_vector: ColumnVector,
-    activations_vector: ColumnVector,
 }
 
 fn main() {
@@ -408,22 +377,6 @@ fn main() {
     let outputs = nn.feed_forward(&inputs);
 
     println!("outputs: {:?}", outputs);
-
-    // println!("gaussian");
-    // let normal = Normal::new(0.0, 1.0).unwrap();
-    // for _ in 0..10 {
-    //     let v = normal.sample(&mut rand::thread_rng());
-    //     println!("{} is from a N(0, 1) distribution", v)
-    // }
-
-    // let weights_vector = column_vector![1.0, 2.0, 3.0];
-    // let activations_vector = column_vector![5.0, 7.0, 11.0];
-    // // let bias = 13.0;
-
-    // // let z = z(&weights_vector, &activations_vector, &biases);
-    // // println!("z = {:?}", z);
-
-    // let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
 }
 
 #[cfg(test)]
@@ -701,7 +654,7 @@ mod tests {
             biases,
         };
 
-        let intermediates = nn.feed_forward_capturing_intermediates(&inputs);
+        let intermediates = nn.feed_forward_capturing(&inputs);
         assert_eq!(intermediates.len(), 3);
         let final_step_values = intermediates.last().unwrap();
         let outputs = final_step_values.activations_vector.clone();
@@ -732,14 +685,14 @@ mod tests {
     }
 
     #[test]
-    pub fn test_cost_for_single_training_example_single_output_neuron() {
+    pub fn test_cost_single_tr_ex_single_output_neuron() {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
         // let's go for y(x0, x1) = x0 + x1;
         let input_example = column_vector![1.0, 1.0];
         let expected_output = column_vector![3.0];
 
-        let c0 = nn.cost_for_single_training_example(&input_example, &expected_output);
+        let c0 = nn.cost_single_tr_ex(&input_example, &expected_output);
 
         // manually compute the expected cost for the single neuron in the last layer
         let a_output = nn.feed_forward(&input_example);
@@ -754,17 +707,17 @@ mod tests {
     }
 
     #[test]
-    pub fn test_cost_for_single_training_example_multiple_output_neurons() {
+    pub fn test_cost_single_tr_ex_multiple_output_neurons() {
         let nn = get_three_layer_multiple_output_nn_for_test();
 
         let input_example = column_vector![0.0, 0.5, 1.0];
         let expected_output_vector = column_vector![2.0, 2.0];
 
-        let c0 = nn.cost_for_single_training_example(&input_example, &expected_output_vector);
+        let c0 = nn.cost_single_tr_ex(&input_example, &expected_output_vector);
 
         // manually compute the expected cost for the single neuron in the last layer
         // this uses a different method to compute the cost, but it is mathematically equivalent to that used
-        // in cost_for_single_training_example
+        // in cost_single_tr_ex
         let actual_output_vector = nn.feed_forward(&input_example);
         let diff_vec = expected_output_vector.minus(&actual_output_vector);
         let length_of_diff_vector = diff_vec.vec_length();
@@ -789,42 +742,37 @@ mod tests {
     pub fn test_cost_for_training_set_iterative_impl() {
         let mut nn = get_three_layer_multiple_output_nn_for_test();
 
-        let input_examples = ColumnsMatrixBuilder::new()
-            .with_column(&[0.0, 0.5, 0.9])
-            .with_column(&[0.0, 0.5, 1.0])
-            .with_column(&[0.0, 0.5, 1.1])
-            .build();
+        let mut training_data = Vec::new();
 
-        let expected_outputs_vector = ColumnsMatrixBuilder::new()
-            .with_column(&[2.0, 2.0])
-            .with_column(&[2.0, 2.0])
-            .with_column(&[2.0, 2.0])
-            .build();
+        training_data.push(TrainingDataPoint {
+            input_v: column_vector![0.0, 0.5, 0.9],
+            desired_output_v: column_vector![2.0, 2.0],
+        });
+        training_data.push(TrainingDataPoint {
+            input_v: column_vector![0.0, 0.5, 1.0],
+            desired_output_v: column_vector![2.0, 2.0],
+        });
+        training_data.push(TrainingDataPoint {
+            input_v: column_vector![0.0, 0.5, 1.1],
+            desired_output_v: column_vector![2.0, 2.0],
+        });
 
-        let c = nn.cost_for_training_set_iterative_impl(&input_examples, &expected_outputs_vector);
+        let c = nn.cost_training_set(&training_data);
 
-        println!("\nc: \n{}", c);
-
-        let c0 = nn.cost_for_single_training_example(
-            &input_examples.extract_column_vector(0),
-            &expected_outputs_vector.extract_column_vector(0),
+        let c0 = nn.cost_single_tr_ex(
+            &training_data[0].input_v,
+            &training_data[0].desired_output_v,
         );
 
-        let c1 = nn.cost_for_single_training_example(
-            &input_examples.extract_column_vector(1),
-            &expected_outputs_vector.extract_column_vector(1),
+        let c1 = nn.cost_single_tr_ex(
+            &training_data[1].input_v,
+            &training_data[1].desired_output_v,
         );
 
-        let c2 = nn.cost_for_single_training_example(
-            &input_examples.extract_column_vector(2),
-            &expected_outputs_vector.extract_column_vector(2),
+        let c2 = nn.cost_single_tr_ex(
+            &training_data[2].input_v,
+            &training_data[2].desired_output_v,
         );
-
-        println!("\nc0: {}", c0);
-        println!("c1: {}", c1);
-        println!("c2: {}", c2);
-
-        println!("\nc0: {}", c0);
 
         let c_avg = (c0 + c1 + c2) / 3.0;
         assert_eq!(c, c_avg);
@@ -835,13 +783,12 @@ mod tests {
         let mut error_vectors_for_each_training_example = Vec::new();
         let mut intermediates_for_each_training_example = Vec::new();
 
-        for i_training_example in 0..input_examples.num_columns() {
-            println!("\nfor the {}th training example", i_training_example);
-            let next_inputs_vector = input_examples.extract_column_vector(i_training_example);
-            let next_expected_outputs_vector =
-                expected_outputs_vector.extract_column_vector(i_training_example);
-            let intermediates = nn.feed_forward_capturing_intermediates(&next_inputs_vector);
-            println!("for input {}", i_training_example);
+        for i_tr_ex in 0..training_data.len() {
+            println!("\nfor the {}th training example", i_tr_ex);
+            let inputs_v = &training_data[i_tr_ex].input_v;
+            let desired_output_v = &training_data[i_tr_ex].desired_output_v;
+            let intermediates = nn.feed_forward_capturing(&inputs_v);
+            println!("for input {}", i_tr_ex);
             println!("intermediates");
             for i_intermediate in 0..intermediates.len() {
                 println!("intermediate {}:", i_intermediate);
@@ -850,22 +797,10 @@ mod tests {
                 println!(" - activations_vector:");
                 println!("{}", intermediates[i_intermediate].activations_vector);
             }
-            let error_vectors_for_this_training_example =
-                nn.backpropate_errors(&next_expected_outputs_vector, &intermediates);
-            error_vectors_for_each_training_example.push(error_vectors_for_this_training_example);
+            let err_vectors_this_tr_ex = nn.backprop(&desired_output_v, &intermediates);
+            error_vectors_for_each_training_example.push(err_vectors_this_tr_ex);
             intermediates_for_each_training_example.push(intermediates);
         }
-
-        // now we have the errors back propagated
-        // update the weights and biases from layers L-1 to 1, where layer L-1 is the output and layer 0 is the input
-
-        nn.update_weights_and_biases(
-            &error_vectors_for_each_training_example,
-            &intermediates_for_each_training_example,
-            0.1,
-        );
-
-        // assert_eq!(1, 0);
     }
 
     const ORANGE: f64 = 0.0;
@@ -898,10 +833,37 @@ mod tests {
         training_data
     }
 
+    fn get_data_set_1b() -> Vec<TrainingDataPoint> {
+        // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
+        let training_data = vec![
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+        ];
+        training_data
+    }
+
     #[test]
     fn test_nn() {
         time_test!();
-        let training_data = get_data_set_1();
+        let training_data = get_data_set_1b();
 
         // 2 x 3 x 1
         let num_neurons_layer_0 = 2;
@@ -936,29 +898,18 @@ mod tests {
         };
 
         // need a matrix with rows = size of input x num data points
-        let mut training_inputs = ColumnsMatrixBuilder::new();
-        let mut expected_outputs = ColumnsMatrixBuilder::new();
 
-        for i_data in 0..training_data.len() {
-            training_inputs.push_column(&training_data[i_data].independant);
-            expected_outputs.push_column(&[training_data[i_data].dependant]);
-        }
+        let epocs = 20000;
+        let learning_rate = 0.9;
 
-        let training_inputs = training_inputs.build();
-        let expected_outputs = expected_outputs.build();
-
-        let epocs = 10000;
-        let learning_rate = 2.0;
-
-        nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
+        nn.train(&training_data, epocs, learning_rate);
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
         let expected_output = column_vector![1.0];
         let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -967,8 +918,7 @@ mod tests {
         let expected_output = column_vector![0.0];
         let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
@@ -982,7 +932,7 @@ mod tests {
     fn test_nn_using_constructor_for_random_initial_weights_and_biases() {
         time_test!();
         // try the same data set as before but use the NN constructor to initialize with random weights/biases
-        let training_data = get_data_set_1();
+        let training_data = get_data_set_1b();
 
         // 2 x 3 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
@@ -997,30 +947,17 @@ mod tests {
             println!("{}", b);
         }
 
-        // need a matrix with rows = size of input x num data points
-        let mut training_inputs = ColumnsMatrixBuilder::new();
-        let mut expected_outputs = ColumnsMatrixBuilder::new();
-
-        for i_data in 0..training_data.len() {
-            training_inputs.push_column(&training_data[i_data].independant);
-            expected_outputs.push_column(&[training_data[i_data].dependant]);
-        }
-
-        let training_inputs = training_inputs.build();
-        let expected_outputs = expected_outputs.build();
-
         let epocs = 7000;
-        let learning_rate = 4.0;
+        let learning_rate = 0.9;
 
-        nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
+        nn.train(&training_data, epocs, learning_rate);
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
         let expected_output = column_vector![1.0];
         let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -1029,8 +966,7 @@ mod tests {
         let expected_output = column_vector![0.0];
         let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
@@ -1045,7 +981,7 @@ mod tests {
         time_test!();
 
         // try more layers and more neurons in the hidden layers to see if I can improve number of epocs
-        let training_data = get_data_set_1();
+        let training_data = get_data_set_1b();
 
         // 2 x 16 x 16 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 16, 16, 1]);
@@ -1060,30 +996,17 @@ mod tests {
             println!("{}", b);
         }
 
-        // need a matrix with rows = size of input x num data points
-        let mut training_inputs = ColumnsMatrixBuilder::new();
-        let mut expected_outputs = ColumnsMatrixBuilder::new();
-
-        for i_data in 0..training_data.len() {
-            training_inputs.push_column(&training_data[i_data].independant);
-            expected_outputs.push_column(&[training_data[i_data].dependant]);
-        }
-
-        let training_inputs = training_inputs.build();
-        let expected_outputs = expected_outputs.build();
-
         let epocs = 2500;
-        let learning_rate = 2.0;
+        let learning_rate = 0.9;
 
-        nn.train(&training_inputs, &expected_outputs, epocs, learning_rate);
+        nn.train(&training_data, epocs, learning_rate);
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
         let expected_output = column_vector![1.0];
         let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -1092,12 +1015,11 @@ mod tests {
         let expected_output = column_vector![0.0];
         let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 =
-            nn.cost_for_single_training_example(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
-        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
-        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.025));
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
