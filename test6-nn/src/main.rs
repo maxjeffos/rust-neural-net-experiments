@@ -27,6 +27,20 @@ struct FeedForwardIntermediates {
     activations_vector: ColumnVector,
 }
 
+pub struct CheckOptions {
+    gradient_checking: bool,
+    cost_decreasing_check: bool,
+}
+
+impl CheckOptions {
+    pub fn no_checks() -> Self {
+        Self {
+            gradient_checking: false,
+            cost_decreasing_check: false,
+        }
+    }
+}
+
 fn z(
     weights_matrix: &Matrix,
     inputs_vector: &ColumnVector,
@@ -248,7 +262,7 @@ impl SimpleNeuralNetwork {
 
     fn compute_gradients(
         &mut self,
-        per_tr_ex_data: Vec<(Vec<FeedForwardIntermediates>, HashMap<usize, ColumnVector>)>, // outer Vec is per training example; FeedForwardIntemediates is full-length per layers. Errors data is a map of layer index to error vector for that layer
+        per_tr_ex_data: &Vec<(Vec<FeedForwardIntermediates>, HashMap<usize, ColumnVector>)>, // outer Vec is per training example; FeedForwardIntemediates is full-length per layers. Errors data is a map of layer index to error vector for that layer
     ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
         let mut gradients = HashMap::new();
         let num_training_examples = per_tr_ex_data.len();
@@ -290,6 +304,7 @@ impl SimpleNeuralNetwork {
         training_data: &Vec<TrainingDataPoint>,
         epocs: usize,
         learning_rate: f64,
+        check_options: Option<CheckOptions>,
     ) {
         let initial_cost = self.cost_training_set(&training_data);
         println!("initial cost across entire training set: {}", initial_cost);
@@ -303,6 +318,9 @@ impl SimpleNeuralNetwork {
         //     update weights and biases
 
         let mut epocs_count = 0;
+        let mut prev_cost = initial_cost;
+
+        let check_options = check_options.unwrap_or(CheckOptions::no_checks());
 
         loop {
             if epocs_count >= epocs {
@@ -319,7 +337,7 @@ impl SimpleNeuralNetwork {
             });
 
             // note: compute_gradients takes data for ALL training examples
-            let mut gradients = self.compute_gradients(per_tr_ex_data);
+            let mut gradients = self.compute_gradients(&per_tr_ex_data);
 
             // update weights and biases
             // TODO: extract to method for easy testing
@@ -340,6 +358,17 @@ impl SimpleNeuralNetwork {
                     weights.subtract_in_place(&weights_grad);
                     biases.minus_in_place(&bias_grad);
                 });
+
+            if check_options.cost_decreasing_check {
+                let cost = self.cost_training_set(&training_data);
+                if cost > prev_cost {
+                    panic!(
+                        "cost increased from {} to {} on epoc {}",
+                        prev_cost, cost, epocs_count
+                    );
+                }
+                prev_cost = cost;
+            }
 
             epocs_count += 1;
 
@@ -902,7 +931,12 @@ mod tests {
         let epocs = 20000;
         let learning_rate = 0.9;
 
-        nn.train(&training_data, epocs, learning_rate);
+        let check_options = CheckOptions {
+            gradient_checking: false,
+            cost_decreasing_check: true,
+        };
+
+        nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
@@ -950,7 +984,12 @@ mod tests {
         let epocs = 7000;
         let learning_rate = 0.9;
 
-        nn.train(&training_data, epocs, learning_rate);
+        let check_options = CheckOptions {
+            gradient_checking: false,
+            cost_decreasing_check: true,
+        };
+
+        nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
@@ -999,7 +1038,12 @@ mod tests {
         let epocs = 2500;
         let learning_rate = 0.9;
 
-        nn.train(&training_data, epocs, learning_rate);
+        let check_options = CheckOptions {
+            gradient_checking: false,
+            cost_decreasing_check: true,
+        };
+
+        nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
         let prediction_input = column_vector![2.0, 2.0];
