@@ -1,5 +1,6 @@
 use rand::distributions::{Distribution, Standard, Uniform};
 use rand::Rng;
+use rand_distr::num_traits::Float;
 use rand_distr::Normal;
 use std::fmt;
 use std::ops::Deref;
@@ -11,6 +12,28 @@ pub fn square_ref(x: &f64) -> f64 {
 
 pub fn square(x: f64) -> f64 {
     x * x
+}
+
+// TODO: also make this a method on ColumnVector
+pub fn euclidian_length(v: &[f64]) -> f64 {
+    v.iter()
+        .map(|vi| vi.powi(2))
+        .sum::<f64>()
+        .sqrt()
+}
+
+// TODO: also make this a method on ColumnVector
+// consider making an `into` so you can go from a Vec<f64> to a ColumnVector (if I haven't already)
+pub fn euclidian_distance(v0: &[f64], v1: &[f64]) -> f64 {
+    if v0.len() != v1.len() {
+        panic!("v0 and v1 must have the same length");
+    }
+
+    v0.iter()
+        .zip(v1.iter())
+        .map(|(x0, x1)| (x1 - x0).powi(2))
+        .sum::<f64>()
+        .sqrt()
 }
 
 #[macro_export]
@@ -27,6 +50,22 @@ macro_rules! column_vector {
     );
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatrixShape {
+    pub rows: usize,
+    pub columns: usize,
+}
+
+impl MatrixShape {
+    pub fn new(rows: usize, columns: usize) -> Self {
+        Self { rows, columns }
+    }
+
+    pub fn data_length(&self) -> usize {
+        self.rows * self.columns
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Matrix {
     num_rows: usize,
@@ -41,6 +80,10 @@ impl Matrix {
 
     pub fn num_columns(&self) -> usize {
         self.num_columns
+    }
+
+    pub fn shape(&self) -> MatrixShape {
+        MatrixShape::new(self.num_rows, self.num_columns)
     }
 
     pub fn empty_with_num_rows(num_rows: usize) -> Matrix {
@@ -64,6 +107,14 @@ impl Matrix {
             num_rows: num_rows,
             num_columns: num_columns,
             data: vec![init_value; num_rows * num_columns],
+        }
+    }
+
+    pub fn new_with_shape_and_values(shape: &MatrixShape, values: &[f64]) -> Self {
+        Self {
+            num_rows: shape.rows,
+            num_columns: shape.columns,
+            data: values.to_vec(),
         }
     }
 
@@ -530,6 +581,10 @@ impl ColumnVector {
     }
 
     pub fn plus(&self, other: &ColumnVector) -> ColumnVector {
+        if self.num_elements() != other.num_elements() {
+            panic!("self and other must have the same length");
+        }
+
         let mut data = Vec::new();
         for i in 0..self.num_elements() {
             data.push(self.get(i) + other.get(i));
@@ -538,6 +593,10 @@ impl ColumnVector {
     }
 
     pub fn plus_in_place(&mut self, other: &ColumnVector) {
+        if self.num_elements() != other.num_elements() {
+            panic!("self and other must have the same length");
+        }
+
         for i in 0..self.num_elements() {
             self.set(i, self.get(i) + other.get(i));
         }
@@ -545,6 +604,10 @@ impl ColumnVector {
 
     /// Variant of addition for use in chaining
     pub fn add(mut self, other: &ColumnVector) -> ColumnVector {
+        if self.num_elements() != other.num_elements() {
+            panic!("self and other must have the same length");
+        }
+
         for i in 0..self.num_elements() {
             self.set(i, self.get(i) + other.get(i));
         }
@@ -654,6 +717,10 @@ impl ColumnVector {
         self.inner_matrix.num_rows += 1;
     }
 
+    // TODO: can probably make a better impl for this special case of transpose
+    // just copy the self.inner_matrix.data and create a Matrix specifying the opposite shape (i.e. A x 1 -> 1 x A).
+    // TODO: see how transpose is used in my NN and, if it would be useful, make a transpose_in_place in which case I wouldn't
+    // even need to copy the data, just re-shape it.
     pub fn transpose(&self) -> Matrix {
         self.inner_matrix.transpose()
     }
@@ -663,6 +730,14 @@ impl ColumnVector {
             panic!("into_value is only valid for a column vector with one element");
         }
         self.get(0)
+    }
+
+    pub fn get_data_as_vec(&self) -> Vec<f64> {
+        self.inner_matrix.data.clone()
+    }
+
+    pub fn get_data_as_slice(&self) -> &[f64] {
+        self.inner_matrix.data.as_slice()
     }
 }
 
@@ -857,6 +932,29 @@ impl ColumnsMatrixBuilder {
         } else {
             panic!("num_columns must be established before building the matrix");
         }
+    }
+}
+
+#[cfg(test)]
+mod test_components_in_the_module_root {
+    use super::*;
+
+    #[test]
+    pub fn test_euclidian_length() {
+        let v = vec![3.0, 4.0];
+        assert_eq!(euclidian_length(&v), 5.0);
+
+        let v = vec![1.0];
+        assert_eq!(euclidian_length(&v), 1.0);
+    }
+
+    #[test]
+    pub fn test_euclidian_distance() {
+        let v1 = vec![3.0];
+        let v2 = vec![4.0];
+        assert_eq!(euclidian_distance(&v1, &v2), 1.0);
+        assert_eq!(euclidian_distance(&[3.0, 0.0], &[0.0, 4.0]), 5.0);
+        assert_eq!(euclidian_distance(&[0.0, 0.0], &[0.0, 0.0]), 0.0);
     }
 }
 
@@ -1451,7 +1549,7 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn add_in_place_works() {
+    fn add_works() {
         let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
         let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
         let res = cv.add(&cv2);
