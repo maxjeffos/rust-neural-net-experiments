@@ -1,26 +1,12 @@
 use std::collections::HashMap;
 
+use common::datapoints::NDTrainingDataPoint;
 use common::linalg::{euclidian_distance, euclidian_length, square};
 use common::linalg::{ColumnVector, Matrix, MatrixShape, RowsMatrixBuilder};
 use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
 use common::{column_vec_of_random_values_from_distribution, column_vector};
 
 type LayerIndex = usize;
-
-#[derive(Debug)]
-pub struct TrainingDataPoint {
-    input_v: ColumnVector,
-    desired_output_v: ColumnVector,
-}
-
-impl TrainingDataPoint {
-    pub fn new(input_v: ColumnVector, desired_output_v: ColumnVector) -> Self {
-        Self {
-            input_v,
-            desired_output_v,
-        }
-    }
-}
 
 struct FeedForwardIntermediates {
     z_vector: ColumnVector,
@@ -37,6 +23,13 @@ impl CheckOptions {
         Self {
             gradient_checking: false,
             cost_decreasing_check: false,
+        }
+    }
+
+    pub fn all_checks() -> Self {
+        Self {
+            gradient_checking: true,
+            cost_decreasing_check: true,
         }
     }
 }
@@ -164,7 +157,7 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    pub fn cost_single_tr_ex(&self, tr_ex: &TrainingDataPoint) -> f64 {
+    pub fn cost_single_tr_ex(&self, tr_ex: &NDTrainingDataPoint) -> f64 {
         if tr_ex.input_v.num_elements() != self.sizes[0] {
             panic!(
                 "input_v must have the same number of elements as the number of neurons in the input layer"
@@ -180,7 +173,7 @@ impl SimpleNeuralNetwork {
         quadratic_cost(&tr_ex.desired_output_v, &outputs)
     }
 
-    pub fn cost_training_set(&self, training_data: &Vec<TrainingDataPoint>) -> f64 {
+    pub fn cost_training_set(&self, training_data: &Vec<NDTrainingDataPoint>) -> f64 {
         training_data
             .iter()
             .map(|tr_ex| self.cost_single_tr_ex(tr_ex))
@@ -241,7 +234,7 @@ impl SimpleNeuralNetwork {
 
     pub fn cost_reshaped_set(
         &self,
-        training_data: &Vec<TrainingDataPoint>,
+        training_data: &Vec<NDTrainingDataPoint>,
         wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
     ) -> f64 {
         training_data
@@ -253,7 +246,7 @@ impl SimpleNeuralNetwork {
 
     pub fn cost_reshaped_single(
         &self,
-        tr_ex: &TrainingDataPoint,
+        tr_ex: &NDTrainingDataPoint,
         sizes: &Vec<usize>,
         wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
     ) -> f64 {
@@ -290,7 +283,7 @@ impl SimpleNeuralNetwork {
     }
 
     /// Used for gradient checking
-    fn approximate_cost_gradient(&self, training_data: &Vec<TrainingDataPoint>) -> Vec<f64> {
+    fn approximate_cost_gradient(&self, training_data: &Vec<NDTrainingDataPoint>) -> Vec<f64> {
         let mut big_theta_v = self.unroll_weights_and_biases();
         let mut gradient = Vec::new();
 
@@ -318,33 +311,30 @@ impl SimpleNeuralNetwork {
     // from the Neilson book
     fn err_last_layer(
         &self,
-        output_activations_vector: &ColumnVector,
-        expected_outputs_vector: &ColumnVector,
-        output_layer_z_vector: &ColumnVector,
+        output_activation_v: &ColumnVector,
+        desired_output_v: &ColumnVector,
+        output_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
-        let mut part1 = output_activations_vector.minus(expected_outputs_vector);
-        let part2 = sigmoid_prime_vector(output_layer_z_vector);
-        part1.hadamard_product_in_place(&part2);
-        part1
+        output_activation_v
+            .minus(desired_output_v)
+            .hadamard_product_chaining(&sigmoid_prime_vector(output_layer_z_v))
     }
 
     // Backprop Equation BP2 from the Neilson book
     fn err_non_last_layer(
         &self,
-        layer: usize,
-        error_vector_for_plus_one_layer: &ColumnVector,
-        this_layer_z_vector: &ColumnVector,
+        layer: LayerIndex,
+        plus_one_layer_error_v: &ColumnVector,
+        this_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
         // there's once less weight matrix than layer since the input layer doesn't have a weight matrix.
         // so if we are on layer 2, weights[2] will be the weights for layer 3 (which is what we want in EQ 2)
         let weight_matrix = self.weights.get(layer).unwrap();
         let weight_matrix_transpose = weight_matrix.transpose();
 
-        let mut part1 = weight_matrix_transpose.mult_vector(error_vector_for_plus_one_layer);
-        let part2 = sigmoid_prime_vector(this_layer_z_vector);
-
-        part1.hadamard_product_in_place(&part2);
-        part1
+        weight_matrix_transpose
+            .mult_vector(plus_one_layer_error_v)
+            .hadamard_product_chaining(&sigmoid_prime_vector(this_layer_z_v))
     }
 
     /// Returns a Vec of column vectors representing the errors at each neuron at each layer from L-1 to 1
@@ -421,7 +411,7 @@ impl SimpleNeuralNetwork {
 
     pub fn train(
         &mut self,
-        training_data: &Vec<TrainingDataPoint>,
+        training_data: &Vec<NDTrainingDataPoint>,
         epocs: usize,
         learning_rate: f64,
         check_options: Option<CheckOptions>,
@@ -866,7 +856,7 @@ mod tests {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
         // let's go for y(x0, x1) = x0 + x1;
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![1.0, 1.0],
             desired_output_v: column_vector![3.0],
         };
@@ -889,7 +879,7 @@ mod tests {
     pub fn test_cost_single_tr_ex_multiple_output_neurons() {
         let nn = get_three_layer_multiple_output_nn_for_test();
 
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![0.0, 0.5, 1.0],
             desired_output_v: column_vector![2.0, 2.0],
         };
@@ -925,15 +915,15 @@ mod tests {
 
         let mut training_data = Vec::new();
 
-        training_data.push(TrainingDataPoint {
+        training_data.push(NDTrainingDataPoint {
             input_v: column_vector![0.0, 0.5, 0.9],
             desired_output_v: column_vector![2.0, 2.0],
         });
-        training_data.push(TrainingDataPoint {
+        training_data.push(NDTrainingDataPoint {
             input_v: column_vector![0.0, 0.5, 1.0],
             desired_output_v: column_vector![2.0, 2.0],
         });
-        training_data.push(TrainingDataPoint {
+        training_data.push(NDTrainingDataPoint {
             input_v: column_vector![0.0, 0.5, 1.1],
             desired_output_v: column_vector![2.0, 2.0],
         });
@@ -1007,29 +997,29 @@ mod tests {
         training_data
     }
 
-    fn get_data_set_1b() -> Vec<TrainingDataPoint> {
+    fn get_data_set_1b() -> Vec<NDTrainingDataPoint> {
         // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
         let training_data = vec![
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
-            TrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
+            NDTrainingDataPoint::new(column_vector![2.0, 2.0], column_vector![BLUE]),
         ];
         training_data
     }
@@ -1076,15 +1066,15 @@ mod tests {
         let epocs = 2000;
         let learning_rate = 0.9;
 
-        let check_options = CheckOptions {
-            gradient_checking: true,
-            cost_decreasing_check: true,
-        };
-
-        nn.train(&training_data, epocs, learning_rate, Some(check_options));
+        nn.train(
+            &training_data,
+            epocs,
+            learning_rate,
+            Some(CheckOptions::all_checks()),
+        );
 
         // predict
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![2.0, 2.0],
             desired_output_v: column_vector![1.0],
         };
@@ -1095,7 +1085,7 @@ mod tests {
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![-2.0, -2.0],
             desired_output_v: column_vector![0.0],
         };
@@ -1142,7 +1132,7 @@ mod tests {
         nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![2.0, 2.0],
             desired_output_v: column_vector![1.0],
         };
@@ -1154,7 +1144,7 @@ mod tests {
 
         // predict
         println!("second prediction");
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![-2.0, -2.0],
             desired_output_v: column_vector![0.0],
         };
@@ -1201,7 +1191,7 @@ mod tests {
         nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![2.0, 2.0],
             desired_output_v: column_vector![1.0],
         };
@@ -1212,7 +1202,7 @@ mod tests {
 
         // predict
         println!("second prediction");
-        let tr_ex = TrainingDataPoint {
+        let tr_ex = NDTrainingDataPoint {
             input_v: column_vector![-2.0, -2.0],
             desired_output_v: column_vector![0.0],
         };

@@ -1,6 +1,7 @@
 use rand;
 use rand::Rng;
 
+pub mod datapoints;
 pub mod linalg;
 pub mod old_matrix;
 pub mod point;

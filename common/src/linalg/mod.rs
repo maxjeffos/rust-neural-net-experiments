@@ -343,6 +343,11 @@ impl Matrix {
         }
     }
 
+    pub fn hadamard_product_chaining(mut self, other: &Self) -> Self {
+        self.hadamard_product_in_place(other);
+        self
+    }
+
     pub fn plus(&self, other: &Self) -> Self {
         if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
@@ -703,6 +708,11 @@ impl ColumnVector {
         for i in 0..self.num_elements() {
             self.set(i, self.get(i) * other.get(i));
         }
+    }
+
+    pub fn hadamard_product_chaining(mut self, other: &ColumnVector) -> Self {
+        self.hadamard_product_in_place(other);
+        self
     }
 
     pub fn vec_length(&self) -> f64 {
@@ -1323,6 +1333,29 @@ mod tests {
     }
 
     #[test]
+    fn test_hadamard_product_chaining() {
+        let m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .build();
+
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .build();
+
+        let res = m.hadamard_product_chaining(&m2);
+        assert_eq!(res.num_rows, 2);
+        assert_eq!(res.num_columns, 3);
+        assert_eq!(res.get(0, 0), 1.0);
+        assert_eq!(res.get(0, 1), 4.0);
+        assert_eq!(res.get(0, 2), 9.0);
+        assert_eq!(res.get(1, 0), 16.0);
+        assert_eq!(res.get(1, 1), 25.0);
+        assert_eq!(res.get(1, 2), 36.0);
+    }
+
+    #[test]
     fn test_vec_length() {
         assert_eq!((column_vector_matrix![0.0]).vec_length(), 0.0);
         assert_eq!((column_vector_matrix![1.0]).vec_length(), 1.0);
@@ -1670,6 +1703,17 @@ mod column_vector_tests {
         assert_eq!(cv1.get(0), 1.0);
         assert_eq!(cv1.get(1), 4.0);
         assert_eq!(cv1.get(2), 9.0);
+    }
+
+    #[test]
+    fn hadamard_product_chaining_works() {
+        let cv1 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let cv2 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let res = cv1.hadamard_product_chaining(&cv2);
+        assert_eq!(res.num_elements(), 3);
+        assert_eq!(res.get(0), 1.0);
+        assert_eq!(res.get(1), 4.0);
+        assert_eq!(res.get(2), 9.0);
     }
 
     #[test]
