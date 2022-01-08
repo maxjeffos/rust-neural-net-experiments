@@ -39,6 +39,13 @@ impl CheckOptions {
             cost_decreasing_check: false,
         }
     }
+
+    pub fn all_checks() -> Self {
+        Self {
+            gradient_checking: true,
+            cost_decreasing_check: true,
+        }
+    }
 }
 
 const GRADIENT_CHECK_EPSILON: f64 = 0.0001; // recommended value from Andrew Ng
@@ -1076,12 +1083,12 @@ mod tests {
         let epocs = 2000;
         let learning_rate = 0.9;
 
-        let check_options = CheckOptions {
-            gradient_checking: true,
-            cost_decreasing_check: true,
-        };
-
-        nn.train(&training_data, epocs, learning_rate, Some(check_options));
+        nn.train(
+            &training_data,
+            epocs,
+            learning_rate,
+            Some(CheckOptions::all_checks()),
+        );
 
         // predict
         let tr_ex = TrainingDataPoint {
