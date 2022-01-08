@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use common::linalg::square;
-use common::linalg::{ColumnVector, Matrix, RowsMatrixBuilder};
+use common::linalg::{euclidian_distance, euclidian_length, square};
+use common::linalg::{ColumnVector, Matrix, MatrixShape, RowsMatrixBuilder};
 use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
 use common::{column_vec_of_random_values_from_distribution, column_vector};
 
@@ -41,12 +41,12 @@ impl CheckOptions {
     }
 }
 
-fn z(
-    weights_matrix: &Matrix,
-    inputs_vector: &ColumnVector,
-    biases_vector: &ColumnVector,
-) -> ColumnVector {
-    weights_matrix.mult_vector(inputs_vector).add(biases_vector)
+const GRADIENT_CHECK_EPSILON: f64 = 0.0001; // recommended value from Andrew Ng
+const GRADIENT_CHECK_TWICE_EPSILON: f64 = 2.0 * GRADIENT_CHECK_EPSILON;
+const GRADIENT_CHECK_EPSILON_SQUARED: f64 = GRADIENT_CHECK_EPSILON * GRADIENT_CHECK_EPSILON;
+
+fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> ColumnVector {
+    weight_matrix.mult_vector(input_v).add(bias_v)
 }
 
 pub struct SimpleNeuralNetwork {
@@ -112,19 +112,22 @@ impl SimpleNeuralNetwork {
         self.sizes.len()
     }
 
+    pub fn get_weight_matrix_shape(&self, layer_index: LayerIndex) -> MatrixShape {
+        if layer_index == 0 {
+            panic!("not valid for input layer (because it has no weights/biases");
+        }
+        MatrixShape::new(self.sizes[layer_index], self.sizes[layer_index - 1])
+    }
+
     pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
-        let mut activation_vector = input_activations.clone();
+        let mut activation_v = input_activations.clone();
 
         for i_step in 0..self.num_layers() - 1 {
-            let z_vec = z(
-                &self.weights[i_step],
-                &activation_vector,
-                &self.biases[i_step],
-            );
-            activation_vector = sigmoid_vector(&z_vec);
+            let z_vec = z(&self.weights[i_step], &self.biases[i_step], &activation_v);
+            activation_v = sigmoid_vector(&z_vec);
         }
 
-        activation_vector
+        activation_v
     }
 
     /// Feed forward capturing the intermediate z vectors and activation vectors.
@@ -138,26 +141,22 @@ impl SimpleNeuralNetwork {
         input_activations: &ColumnVector,
     ) -> Vec<FeedForwardIntermediates> {
         let mut intermediates = Vec::new();
-        let mut activation_vector = input_activations.clone();
+        let mut activation_v = input_activations.clone();
 
         for l in 0..self.num_layers() {
             if l == 0 {
                 intermediates.push(FeedForwardIntermediates {
                     // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
-                    z_vector: ColumnVector::fill_new(f64::NAN, activation_vector.num_elements()),
-                    activations_vector: activation_vector.clone(),
+                    z_vector: ColumnVector::fill_new(f64::NAN, activation_v.num_elements()),
+                    activations_vector: activation_v.clone(),
                 });
             } else {
-                let z_vec = z(
-                    &self.weights[l - 1],
-                    &activation_vector,
-                    &self.biases[l - 1],
-                );
-                activation_vector = sigmoid_vector(&z_vec);
+                let z_vec = z(&self.weights[l - 1], &self.biases[l - 1], &activation_v);
+                activation_v = sigmoid_vector(&z_vec);
 
                 intermediates.push(FeedForwardIntermediates {
                     z_vector: z_vec.clone(),
-                    activations_vector: activation_vector.clone(),
+                    activations_vector: activation_v.clone(),
                 });
             }
         }
@@ -165,32 +164,154 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    pub fn cost_single_tr_ex(
-        &self,
-        input_v: &ColumnVector,
-        desired_output_v: &ColumnVector,
-    ) -> f64 {
-        if input_v.num_elements() != self.sizes[0] {
+    pub fn cost_single_tr_ex(&self, tr_ex: &TrainingDataPoint) -> f64 {
+        if tr_ex.input_v.num_elements() != self.sizes[0] {
             panic!(
                 "input_v must have the same number of elements as the number of neurons in the input layer"
             );
         }
 
-        let outputs = self.feed_forward(&input_v);
+        let outputs = self.feed_forward(&tr_ex.input_v);
 
-        if outputs.num_elements() != desired_output_v.num_elements() {
+        if outputs.num_elements() != tr_ex.desired_output_v.num_elements() {
             panic!("input_v and desired_output_v must have the same length");
         }
 
-        quadratic_cost(desired_output_v, &outputs)
+        quadratic_cost(&tr_ex.desired_output_v, &outputs)
     }
 
     pub fn cost_training_set(&self, training_data: &Vec<TrainingDataPoint>) -> f64 {
         training_data
             .iter()
-            .map(|tr_ex| self.cost_single_tr_ex(&tr_ex.input_v, &tr_ex.desired_output_v))
+            .map(|tr_ex| self.cost_single_tr_ex(tr_ex))
             .sum::<f64>()
             / training_data.len() as f64
+    }
+
+    // returning a Vec<f64> instead of a ColumnVector here because I don't think we'll do any math with it in its raw form.
+    // So using it as a Vec will probably give me maximum flexibility.
+    fn unroll_weights_and_biases(&self) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.num_layers() {
+            let weights_bias_index = l - 1; // TODO: weight/bias index kludge
+            unrolled_vec.extend_from_slice(&self.weights[weights_bias_index].data);
+            unrolled_vec.extend_from_slice(&self.biases[weights_bias_index].get_data_as_slice());
+        }
+        unrolled_vec
+    }
+
+    fn unroll_gradients(
+        &self,
+        gradients: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
+    ) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.num_layers() {
+            let this_layer_gradients = gradients.get(&l).unwrap();
+            unrolled_vec.extend_from_slice(this_layer_gradients.0.data.as_slice()); // .0 is the weights matrix
+            unrolled_vec.extend_from_slice(this_layer_gradients.1.get_data_as_slice());
+            // .0 is the weights matrix
+        }
+        unrolled_vec
+    }
+
+    /// reshape theta_v in accordance with the sizes of the layers
+    fn reshape_weights_and_biases(
+        &self,
+        big_theta_v: &[f64],
+    ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
+        // we know the number of layers and the size of each one
+        // so we know what size of weights and biases we need
+        // just need to pull things out correctly form big_theta_v.
+
+        let mut weights_and_biases = HashMap::new();
+        let mut ptr: usize = 0;
+
+        for l in 1..self.num_layers() {
+            let w_shape = self.get_weight_matrix_shape(l);
+            let w_data = &big_theta_v[ptr..(ptr + w_shape.data_length())];
+            let w = Matrix::new_with_shape_and_values(&w_shape, w_data);
+            ptr += w_shape.data_length();
+            let b = ColumnVector::new(&big_theta_v[ptr..(ptr + self.sizes[l])]);
+            ptr += self.sizes[l];
+            weights_and_biases.insert(l, (w, b));
+        }
+
+        weights_and_biases
+    }
+
+    pub fn cost_reshaped_set(
+        &self,
+        training_data: &Vec<TrainingDataPoint>,
+        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
+    ) -> f64 {
+        training_data
+            .iter()
+            .map(|tr_ex| self.cost_reshaped_single(&tr_ex, &self.sizes, wb))
+            .sum::<f64>()
+            / training_data.len() as f64
+    }
+
+    pub fn cost_reshaped_single(
+        &self,
+        tr_ex: &TrainingDataPoint,
+        sizes: &Vec<usize>,
+        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
+    ) -> f64 {
+        if tr_ex.input_v.num_elements() != self.sizes[0] {
+            panic!(
+                "input_v must have the same number of elements as the number of neurons in the input layer"
+            );
+        }
+
+        let output_v = SimpleNeuralNetwork::ff(&tr_ex.input_v, sizes, wb);
+
+        if output_v.num_elements() != tr_ex.desired_output_v.num_elements() {
+            panic!("input_v and desired_output_v must have the same length");
+        }
+
+        quadratic_cost(&tr_ex.desired_output_v, &output_v)
+    }
+
+    pub fn ff(
+        input_v: &ColumnVector,
+        sizes: &Vec<usize>,
+        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
+    ) -> ColumnVector {
+        let mut activation_v = input_v.clone();
+
+        for l in 1..sizes.len() {
+            let w = &wb.get(&l).unwrap().0;
+            let b = &wb.get(&l).unwrap().1;
+            let z_v = z(w, b, &activation_v);
+            activation_v = sigmoid_vector(&z_v);
+        }
+
+        activation_v
+    }
+
+    /// Used for gradient checking
+    fn approximate_cost_gradient(&self, training_data: &Vec<TrainingDataPoint>) -> Vec<f64> {
+        let mut big_theta_v = self.unroll_weights_and_biases();
+        let mut gradient = Vec::new();
+
+        for i in 0..big_theta_v.len() {
+            let orig_i_value = big_theta_v[i];
+
+            big_theta_v[i] = orig_i_value + GRADIENT_CHECK_EPSILON;
+            let wbs = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_plus_epsilon = self.cost_reshaped_set(training_data, &wbs);
+
+            big_theta_v[i] = orig_i_value - GRADIENT_CHECK_EPSILON;
+            let wbs = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_minus_epsilon = self.cost_reshaped_set(training_data, &wbs);
+
+            big_theta_v[i] = orig_i_value; // important - restore the orig value
+
+            let approx_cost_fn_partial_derivative =
+                (cost_plus_epsilon - cost_minus_epsilon) / GRADIENT_CHECK_TWICE_EPSILON;
+            gradient.push(approx_cost_fn_partial_derivative);
+        }
+        gradient
     }
 
     // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
@@ -298,7 +419,6 @@ impl SimpleNeuralNetwork {
         gradients
     }
 
-    // fn update_weights
     pub fn train(
         &mut self,
         training_data: &Vec<TrainingDataPoint>,
@@ -339,9 +459,29 @@ impl SimpleNeuralNetwork {
             // note: compute_gradients takes data for ALL training examples
             let mut gradients = self.compute_gradients(&per_tr_ex_data);
 
-            // update weights and biases
-            // TODO: extract to method for easy testing
+            if check_options.gradient_checking {
+                let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
+                // unroll the actual gradients
+                let d_vec = self.unroll_gradients(&gradients);
+                // compare the two vectors and fail (panic?) if it fails
 
+                let ed = euclidian_distance(&approx_gradients_big_v, &d_vec);
+                println!("ed: {}", ed);
+
+                if ed > GRADIENT_CHECK_EPSILON_SQUARED {
+                    panic!("failed gradient check");
+                }
+
+                let normalized_distance = euclidian_distance(&approx_gradients_big_v, &d_vec)
+                    / (euclidian_length(&approx_gradients_big_v) + euclidian_length(&d_vec));
+
+                if normalized_distance > GRADIENT_CHECK_EPSILON_SQUARED {
+                    panic!("failed gradient check");
+                }
+            }
+
+            // update the weights and biases
+            // TODO: extract to method for easy testing
             gradients
                 .iter_mut()
                 .for_each(|(layer_index, (weights_grad, bias_grad))| {
@@ -524,14 +664,14 @@ mod tests {
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        let biases = column_vector![0.5, 0.5];
-        let inputs = column_vector![1.0, 2.0, 3.0];
+        let bias_v = column_vector![0.5, 0.5];
+        let input_v = column_vector![1.0, 2.0, 3.0];
 
-        let outputs = z(&weights, &inputs, &biases);
+        let weighted_sum_v = z(&weights, &bias_v, &input_v);
 
-        assert_eq!(outputs.num_elements(), 2);
-        assert_eq!(outputs.get(0), 14.5);
-        assert_eq!(outputs.get(1), 32.5);
+        assert_eq!(weighted_sum_v.num_elements(), 2);
+        assert_eq!(weighted_sum_v.get(0), 14.5);
+        assert_eq!(weighted_sum_v.get(1), 32.5);
     }
 
     #[test]
@@ -562,6 +702,14 @@ mod tests {
         assert_eq!(outputs.num_elements(), 2);
         assert_eq!(outputs.get(0), 0.7005671424739729);
         assert_eq!(outputs.get(1), 0.8320183851339245);
+
+        // now see if I can do this from the unrolled big_theta_v
+        let big_theta_v = nn.unroll_weights_and_biases();
+        let reshaped = nn.reshape_weights_and_biases(&big_theta_v);
+        let ff_fn_output_v = SimpleNeuralNetwork::ff(&inputs, &nn.sizes, &reshaped);
+        assert_eq!(ff_fn_output_v.num_elements(), 2);
+        assert_eq!(ff_fn_output_v.get(0), 0.7005671424739729);
+        assert_eq!(ff_fn_output_v.get(1), 0.8320183851339245);
     }
 
     #[test]
@@ -718,13 +866,15 @@ mod tests {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
         // let's go for y(x0, x1) = x0 + x1;
-        let input_example = column_vector![1.0, 1.0];
-        let expected_output = column_vector![3.0];
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![1.0, 1.0],
+            desired_output_v: column_vector![3.0],
+        };
 
-        let c0 = nn.cost_single_tr_ex(&input_example, &expected_output);
+        let c0 = nn.cost_single_tr_ex(&tr_ex);
 
         // manually compute the expected cost for the single neuron in the last layer
-        let a_output = nn.feed_forward(&input_example);
+        let a_output = nn.feed_forward(&tr_ex.input_v);
         let a_output_value = a_output.into_value();
 
         let manual_cost = (3.0 - a_output_value).powi(2) / 2.0;
@@ -739,16 +889,18 @@ mod tests {
     pub fn test_cost_single_tr_ex_multiple_output_neurons() {
         let nn = get_three_layer_multiple_output_nn_for_test();
 
-        let input_example = column_vector![0.0, 0.5, 1.0];
-        let expected_output_vector = column_vector![2.0, 2.0];
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![0.0, 0.5, 1.0],
+            desired_output_v: column_vector![2.0, 2.0],
+        };
 
-        let c0 = nn.cost_single_tr_ex(&input_example, &expected_output_vector);
+        let c0 = nn.cost_single_tr_ex(&tr_ex);
 
         // manually compute the expected cost for the single neuron in the last layer
         // this uses a different method to compute the cost, but it is mathematically equivalent to that used
         // in cost_single_tr_ex
-        let actual_output_vector = nn.feed_forward(&input_example);
-        let diff_vec = expected_output_vector.minus(&actual_output_vector);
+        let actual_output_vector = nn.feed_forward(&tr_ex.input_v);
+        let diff_vec = &tr_ex.desired_output_v.minus(&actual_output_vector);
         let length_of_diff_vector = diff_vec.vec_length();
         let length_of_diff_vector_squared = length_of_diff_vector * length_of_diff_vector;
         let over_two = length_of_diff_vector_squared / 2.0;
@@ -787,27 +939,20 @@ mod tests {
         });
 
         let c = nn.cost_training_set(&training_data);
-
-        let c0 = nn.cost_single_tr_ex(
-            &training_data[0].input_v,
-            &training_data[0].desired_output_v,
-        );
-
-        let c1 = nn.cost_single_tr_ex(
-            &training_data[1].input_v,
-            &training_data[1].desired_output_v,
-        );
-
-        let c2 = nn.cost_single_tr_ex(
-            &training_data[2].input_v,
-            &training_data[2].desired_output_v,
-        );
-
+        let c0 = nn.cost_single_tr_ex(&training_data[0]);
+        let c1 = nn.cost_single_tr_ex(&training_data[1]);
+        let c2 = nn.cost_single_tr_ex(&training_data[2]);
         let c_avg = (c0 + c1 + c2) / 3.0;
         assert_eq!(c, c_avg);
 
-        // from here on, I'm testing the towards_backprop stuff
+        // now do the same cost test with big_theta_v
+        let big_theta_v = nn.unroll_weights_and_biases();
+        let reshaped = nn.reshape_weights_and_biases(&big_theta_v);
+        assert_eq!(reshaped.len(), 2);
+        let cost_big_theta_v = nn.cost_reshaped_set(&training_data, &reshaped);
+        assert_eq!(cost_big_theta_v, c);
 
+        // from here on, I'm testing the towards_backprop stuff
         println!("\nIn the test - doing the pre backprop stuff: {}", c0);
         let mut error_vectors_for_each_training_example = Vec::new();
         let mut intermediates_for_each_training_example = Vec::new();
@@ -928,38 +1073,43 @@ mod tests {
 
         // need a matrix with rows = size of input x num data points
 
-        let epocs = 20000;
+        let epocs = 2000;
         let learning_rate = 0.9;
 
         let check_options = CheckOptions {
-            gradient_checking: false,
+            gradient_checking: true,
             cost_decreasing_check: true,
         };
 
         nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
-        let prediction_input = column_vector![2.0, 2.0];
-        let expected_output = column_vector![1.0];
-        let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![2.0, 2.0],
+            desired_output_v: column_vector![1.0],
+        };
+
+        let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
-        println!("second prediction");
-        let prediction_input = column_vector![-2.0, -2.0];
-        let expected_output = column_vector![0.0];
-        let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![-2.0, -2.0],
+            desired_output_v: column_vector![0.0],
+        };
+
+        let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
-        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.01));
-        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.01));
+        assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.05));
+        assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.05));
 
-        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
-        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.001));
+        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.001));
     }
 
     #[test]
@@ -992,27 +1142,32 @@ mod tests {
         nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
-        let prediction_input = column_vector![2.0, 2.0];
-        let expected_output = column_vector![1.0];
-        let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![2.0, 2.0],
+            desired_output_v: column_vector![1.0],
+        };
+
+        let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
         println!("second prediction");
-        let prediction_input = column_vector![-2.0, -2.0];
-        let expected_output = column_vector![0.0];
-        let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![-2.0, -2.0],
+            desired_output_v: column_vector![0.0],
+        };
+        let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
         assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.025));
 
-        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
-        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0002));
+        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0002));
     }
 
     #[test]
@@ -1046,20 +1201,24 @@ mod tests {
         nn.train(&training_data, epocs, learning_rate, Some(check_options));
 
         // predict
-        let prediction_input = column_vector![2.0, 2.0];
-        let expected_output = column_vector![1.0];
-        let predicted_output_0 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![2.0, 2.0],
+            desired_output_v: column_vector![1.0],
+        };
+        let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
         println!("second prediction");
-        let prediction_input = column_vector![-2.0, -2.0];
-        let expected_output = column_vector![0.0];
-        let predicted_output_1 = nn.feed_forward(&prediction_input).into_value();
+        let tr_ex = TrainingDataPoint {
+            input_v: column_vector![-2.0, -2.0],
+            desired_output_v: column_vector![0.0],
+        };
+        let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&prediction_input, &expected_output);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
@@ -1067,5 +1226,162 @@ mod tests {
 
         assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+    }
+
+    #[test]
+    fn test_get_weight_matrix_shape() {
+        let nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
+        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+        assert_eq!(weight_matrix_l1_shape.rows, 3);
+        assert_eq!(weight_matrix_l1_shape.columns, 2);
+        assert_eq!(weight_matrix_l2_shape.rows, 2);
+        assert_eq!(weight_matrix_l2_shape.columns, 3);
+    }
+
+    #[test]
+    fn test_unroll_weights_and_biases() {
+        let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
+        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+
+        assert_eq!(weight_matrix_l1_shape, MatrixShape::new(3, 2));
+        assert_eq!(weight_matrix_l2_shape, MatrixShape::new(2, 3));
+
+        // the initial weights and biases are random
+        // overwrite them with known values so we can test the unroll
+
+        // input layer - no weights or biases
+
+        // layer l = 1
+        let layer_1_matrix_index = 1 - 1; // because one less than num layers
+        let w1 = nn.weights.get_mut(layer_1_matrix_index).unwrap();
+
+        println!("weight_matrix_l1_shape: {:?}", weight_matrix_l1_shape);
+        println!("w1 shape: {} x {}", w1.num_rows(), w1.num_columns());
+        println!("w1: \n{}", w1);
+
+        w1.set(0, 0, 1.0);
+        w1.set(0, 1, 2.0);
+        w1.set(1, 0, 3.0);
+        w1.set(1, 1, 4.0);
+        w1.set(2, 0, 5.0);
+        w1.set(2, 1, 6.0);
+
+        println!("w1: \n{}", w1);
+
+        let b1 = nn.biases.get_mut(layer_1_matrix_index).unwrap();
+        b1.set(0, 7.0);
+        b1.set(1, 8.0);
+        b1.set(2, 9.0);
+
+        // layer l = 2 (output layer)
+        let layer_2_matrix_index = 2 - 1; // because one less than num layers
+        let w2 = nn.weights.get_mut(layer_2_matrix_index).unwrap();
+        let b2 = nn.biases.get_mut(layer_2_matrix_index).unwrap();
+
+        w2.set(0, 0, 10.0);
+        w2.set(0, 1, 11.0);
+        w2.set(0, 2, 12.0);
+        w2.set(1, 0, 13.0);
+        w2.set(1, 1, 14.0);
+        w2.set(1, 2, 15.0);
+
+        b2.set(0, 16.0);
+        b2.set(1, 17.0);
+
+        let big_theta_v = nn.unroll_weights_and_biases();
+        assert_eq!(big_theta_v.len(), 17);
+        assert_eq!(
+            big_theta_v,
+            vec![
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0, 17.0
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unroll_gradients() {
+        let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
+        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+
+        assert_eq!(weight_matrix_l1_shape, MatrixShape::new(3, 2));
+        assert_eq!(weight_matrix_l2_shape, MatrixShape::new(2, 3));
+
+        let mut gradients = HashMap::new();
+
+        // for layer 1
+        let mut w1 = Matrix::new_zero_matrix(3, 2);
+        let mut b1 = ColumnVector::new_zero_vector(3);
+
+        w1.set(0, 0, 0.1);
+        w1.set(0, 1, 0.2);
+        w1.set(1, 0, 0.3);
+        w1.set(1, 1, 0.4);
+        w1.set(2, 0, 0.5);
+        w1.set(2, 1, 0.6);
+
+        b1.set(0, 0.7);
+        b1.set(1, 0.8);
+        b1.set(2, 0.9);
+
+        // for layer 2
+        let mut w2 = Matrix::new_zero_matrix(2, 3);
+        let mut b2 = ColumnVector::new_zero_vector(2);
+
+        w2.set(0, 0, 0.1);
+        w2.set(0, 1, 0.11);
+        w2.set(0, 2, 0.12);
+        w2.set(1, 0, 0.13);
+        w2.set(1, 1, 0.14);
+        w2.set(1, 2, 0.15);
+
+        b2.set(0, 0.16);
+        b2.set(1, 0.17);
+
+        gradients.insert(1, (w1, b1));
+        gradients.insert(2, (w2, b2));
+
+        let big_d_vec = nn.unroll_gradients(&gradients);
+        assert_eq!(big_d_vec.len(), 17);
+        assert_eq!(
+            big_d_vec,
+            vec![
+                0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15,
+                0.16, 0.17
+            ]
+        );
+    }
+
+    #[test]
+    fn test_reshape_weights_and_biases() {
+        let nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
+
+        let big_theta_v = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+            17.0,
+        ];
+
+        let wbs = nn.reshape_weights_and_biases(&big_theta_v);
+
+        assert_eq!(wbs.len(), 2);
+        let wb1 = wbs.get(&1).unwrap();
+        let wb2 = wbs.get(&2).unwrap();
+
+        let w1 = &wb1.0;
+        let b1 = &wb1.1;
+        assert_eq!(w1.shape(), MatrixShape::new(3, 2));
+        assert_eq!(w1.data.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(b1.num_elements(), 3);
+        assert_eq!(b1.get_data_as_slice(), &[7.0, 8.0, 9.0]);
+
+        let w2 = &wb2.0;
+        let b2 = &wb2.1;
+        assert_eq!(w2.shape(), MatrixShape::new(2, 3));
+        assert_eq!(w2.data.as_slice(), &[10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+        assert_eq!(b2.num_elements(), 2);
+        assert_eq!(b2.get_data_as_slice(), &[16.0, 17.0]);
     }
 }
