@@ -311,33 +311,30 @@ impl SimpleNeuralNetwork {
     // from the Neilson book
     fn err_last_layer(
         &self,
-        output_activations_vector: &ColumnVector,
-        expected_outputs_vector: &ColumnVector,
-        output_layer_z_vector: &ColumnVector,
+        output_activation_v: &ColumnVector,
+        desired_output_v: &ColumnVector,
+        output_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
-        let mut part1 = output_activations_vector.minus(expected_outputs_vector);
-        let part2 = sigmoid_prime_vector(output_layer_z_vector);
-        part1.hadamard_product_in_place(&part2);
-        part1
+        output_activation_v
+            .minus(desired_output_v)
+            .hadamard_product_chaining(&sigmoid_prime_vector(output_layer_z_v))
     }
 
     // Backprop Equation BP2 from the Neilson book
     fn err_non_last_layer(
         &self,
-        layer: usize,
-        error_vector_for_plus_one_layer: &ColumnVector,
-        this_layer_z_vector: &ColumnVector,
+        layer: LayerIndex,
+        plus_one_layer_error_v: &ColumnVector,
+        this_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
         // there's once less weight matrix than layer since the input layer doesn't have a weight matrix.
         // so if we are on layer 2, weights[2] will be the weights for layer 3 (which is what we want in EQ 2)
         let weight_matrix = self.weights.get(layer).unwrap();
         let weight_matrix_transpose = weight_matrix.transpose();
 
-        let mut part1 = weight_matrix_transpose.mult_vector(error_vector_for_plus_one_layer);
-        let part2 = sigmoid_prime_vector(this_layer_z_vector);
-
-        part1.hadamard_product_in_place(&part2);
-        part1
+        weight_matrix_transpose
+            .mult_vector(plus_one_layer_error_v)
+            .hadamard_product_chaining(&sigmoid_prime_vector(this_layer_z_v))
     }
 
     /// Returns a Vec of column vectors representing the errors at each neuron at each layer from L-1 to 1
