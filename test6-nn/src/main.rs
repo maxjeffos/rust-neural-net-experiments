@@ -9,8 +9,8 @@ use common::{column_vec_of_random_values_from_distribution, column_vector};
 type LayerIndex = usize;
 
 struct FeedForwardIntermediates {
-    z_vector: ColumnVector,
-    activations_vector: ColumnVector,
+    z_v: ColumnVector,
+    activation_v: ColumnVector,
 }
 
 pub struct CheckOptions {
@@ -43,17 +43,17 @@ fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> C
 }
 
 pub struct SimpleNeuralNetwork {
-    sizes: Vec<usize>,
+    sizes: Vec<LayerIndex>,
 
     // A vec of weight matricies - one for each inter-layer step
     // For each weight matrix, a row corresponds to the input neurons in the previous layer
     // and a particular neuron in the next layer.
     // Thus, the dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
-    weights: Vec<Matrix>,
+    weights: HashMap<LayerIndex, Matrix>,
 
     // A vec of ColumnVectors - one for inter-layer step.
     // Each vector will have length equal to the number of neurons in the next layer.
-    biases: Vec<ColumnVector>,
+    biases: HashMap<LayerIndex, ColumnVector>,
 }
 
 // Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
@@ -74,24 +74,21 @@ fn quadratic_cost(desired_v: &ColumnVector, actual_v: &ColumnVector) -> f64 {
 
 impl SimpleNeuralNetwork {
     pub fn new(sizes: Vec<usize>) -> Self {
-        let mut biases = Vec::new();
-
-        for i in 1..sizes.len() {
-            let biases_column_vector =
-                column_vec_of_random_values_from_distribution(0.0, 1.0, sizes[i]);
-            biases.push(biases_column_vector);
-        }
-
-        let mut weights = Vec::new();
+        let mut biases = HashMap::new();
+        let mut weights = HashMap::new();
 
         for l in 1..sizes.len() {
+            let biases_column_vector =
+                column_vec_of_random_values_from_distribution(0.0, 1.0, sizes[l]);
+            biases.insert(l, biases_column_vector);
+
             let weights_matrix = Matrix::new_matrix_with_random_values_from_normal_distribution(
                 sizes[l],
                 sizes[l - 1],
                 0.0,
                 1.0,
             );
-            weights.push(weights_matrix);
+            weights.insert(l, weights_matrix);
         }
 
         Self {
@@ -115,9 +112,13 @@ impl SimpleNeuralNetwork {
     pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
         let mut activation_v = input_activations.clone();
 
-        for i_step in 0..self.num_layers() - 1 {
-            let z_vec = z(&self.weights[i_step], &self.biases[i_step], &activation_v);
-            activation_v = sigmoid_vector(&z_vec);
+        for l in 1..self.sizes.len() {
+            let z_v = z(
+                self.weights.get(&l).unwrap(),
+                self.biases.get(&l).unwrap(),
+                &activation_v,
+            );
+            activation_v = sigmoid_vector(&z_v);
         }
 
         activation_v
@@ -127,30 +128,39 @@ impl SimpleNeuralNetwork {
     /// # Arguments
     /// * `input_activations` - The input activations
     /// # Returns
-    /// A Vec<FeedForwardIntermediateValues> - one for each layer other than the first (input) layer (simiar to weights and biases).
-    /// The output is full length - i.e. as many entries in the Vec as there are layers and in the same order as the layers.
+    /// A HashMap<LayerIndex, FeedForwardIntermediateValues> with an entry for each layer. For the input layer, only the activation_v is populated since z_v doesn't make sense for it.
     fn feed_forward_capturing(
         &self,
         input_activations: &ColumnVector,
-    ) -> Vec<FeedForwardIntermediates> {
-        let mut intermediates = Vec::new();
+    ) -> HashMap<LayerIndex, FeedForwardIntermediates> {
+        let mut intermediates = HashMap::new();
         let mut activation_v = input_activations.clone();
 
         for l in 0..self.num_layers() {
             if l == 0 {
-                intermediates.push(FeedForwardIntermediates {
-                    // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
-                    z_vector: ColumnVector::fill_new(f64::NAN, activation_v.num_elements()),
-                    activations_vector: activation_v.clone(),
-                });
+                intermediates.insert(
+                    l,
+                    FeedForwardIntermediates {
+                        // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
+                        z_v: ColumnVector::fill_new(f64::NAN, activation_v.num_elements()),
+                        activation_v: activation_v.clone(),
+                    },
+                );
             } else {
-                let z_vec = z(&self.weights[l - 1], &self.biases[l - 1], &activation_v);
-                activation_v = sigmoid_vector(&z_vec);
+                let z_v = z(
+                    self.weights.get(&l).unwrap(),
+                    self.biases.get(&l).unwrap(),
+                    &activation_v,
+                );
+                activation_v = sigmoid_vector(&z_v);
 
-                intermediates.push(FeedForwardIntermediates {
-                    z_vector: z_vec.clone(),
-                    activations_vector: activation_v.clone(),
-                });
+                intermediates.insert(
+                    l,
+                    FeedForwardIntermediates {
+                        z_v: z_v.clone(),
+                        activation_v: activation_v.clone(),
+                    },
+                );
             }
         }
 
@@ -186,9 +196,8 @@ impl SimpleNeuralNetwork {
     fn unroll_weights_and_biases(&self) -> Vec<f64> {
         let mut unrolled_vec = Vec::new();
         for l in 1..self.num_layers() {
-            let weights_bias_index = l - 1; // TODO: weight/bias index kludge
-            unrolled_vec.extend_from_slice(&self.weights[weights_bias_index].data);
-            unrolled_vec.extend_from_slice(&self.biases[weights_bias_index].get_data_as_slice());
+            unrolled_vec.extend_from_slice(&self.weights.get(&l).unwrap().data);
+            unrolled_vec.extend_from_slice(&self.biases.get(&l).unwrap().get_data_as_slice());
         }
         unrolled_vec
     }
@@ -327,12 +336,10 @@ impl SimpleNeuralNetwork {
         plus_one_layer_error_v: &ColumnVector,
         this_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
-        // there's once less weight matrix than layer since the input layer doesn't have a weight matrix.
-        // so if we are on layer 2, weights[2] will be the weights for layer 3 (which is what we want in EQ 2)
-        let weight_matrix = self.weights.get(layer).unwrap();
-        let weight_matrix_transpose = weight_matrix.transpose();
+        let weight_matrix = self.weights.get(&(layer + 1)).unwrap();
 
-        weight_matrix_transpose
+        weight_matrix
+            .transpose()
             .mult_vector(plus_one_layer_error_v)
             .hadamard_product_chaining(&sigmoid_prime_vector(this_layer_z_v))
     }
@@ -344,24 +351,24 @@ impl SimpleNeuralNetwork {
     fn backprop(
         &self,
         desired_output_v: &ColumnVector,
-        intermediates: &Vec<FeedForwardIntermediates>,
+        intermediates: &HashMap<LayerIndex, FeedForwardIntermediates>,
     ) -> HashMap<LayerIndex, ColumnVector> {
         // loop through the layers from back to front, and compute the error at each one.
         // Create a column vector representing the errors at each layer
 
-        // the key of the map is the layer index
         let mut error_vectors = HashMap::new();
 
         let last_layer_index = self.num_layers() - 1;
 
         for l in (1..self.num_layers()).rev() {
-            let z_v = &intermediates[l].z_vector;
+            let z_v = &intermediates.get(&l).unwrap().z_v;
 
             let err_v = if l == last_layer_index {
-                let activations_v = &intermediates[last_layer_index].activations_vector;
+                let activations_v = &intermediates[&last_layer_index].activation_v;
                 self.err_last_layer(&activations_v, desired_output_v, &z_v)
             } else {
                 let error_vector_for_plus_one_layer = error_vectors.get(&(l + 1)).unwrap();
+                println!("in backprop, l = {}", l);
                 self.err_non_last_layer(l, error_vector_for_plus_one_layer, z_v)
             };
 
@@ -373,7 +380,10 @@ impl SimpleNeuralNetwork {
 
     fn compute_gradients(
         &mut self,
-        per_tr_ex_data: &Vec<(Vec<FeedForwardIntermediates>, HashMap<usize, ColumnVector>)>, // outer Vec is per training example; FeedForwardIntemediates is full-length per layers. Errors data is a map of layer index to error vector for that layer
+        per_tr_ex_data: &Vec<(
+            HashMap<usize, FeedForwardIntermediates>,
+            HashMap<usize, ColumnVector>,
+        )>, // outer Vec is per training example
     ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
         let mut gradients = HashMap::new();
         let num_training_examples = per_tr_ex_data.len();
@@ -387,7 +397,7 @@ impl SimpleNeuralNetwork {
                 .iter()
                 .for_each(|(intermediates, error_vectors)| {
                     let prev_layer_activations_v =
-                        &intermediates.get(l - 1).unwrap().activations_vector;
+                        &intermediates.get(&(l - 1)).unwrap().activation_v;
 
                     let this_layer_err_v = error_vectors.get(&l).unwrap();
 
@@ -480,10 +490,8 @@ impl SimpleNeuralNetwork {
                     weights_grad.multiply_by_scalar_in_place(learning_rate);
                     bias_grad.multiply_by_scalar_in_place(learning_rate);
 
-                    let i_weights_and_biases = layer_index - 1; // -1 because one less than num layers. TODO: clean this up
-
-                    let weights = self.weights.get_mut(i_weights_and_biases).unwrap();
-                    let biases = self.biases.get_mut(i_weights_and_biases).unwrap();
+                    let weights = self.weights.get_mut(&layer_index).unwrap();
+                    let biases = self.biases.get_mut(&layer_index).unwrap();
 
                     weights.subtract_in_place(&weights_grad);
                     biases.minus_in_place(&bias_grad);
@@ -520,17 +528,23 @@ fn main() {
 
     let inputs = column_vector![0.0, 0.5, 1.0];
 
-    let weights = RowsMatrixBuilder::new()
+    let weight_m_layer_1 = RowsMatrixBuilder::new()
         .with_row(&[0.5, 0.5, 0.5])
         .with_row(&[1.0, 1.0, 1.0])
         .build();
 
-    let biases = column_vector![0.1, 0.1];
+    let bias_v_layer_1 = column_vector![0.1, 0.1];
+
+    let mut weights = HashMap::new();
+    weights.insert(1, weight_m_layer_1);
+
+    let mut biases = HashMap::new();
+    biases.insert(1, bias_v_layer_1);
 
     let nn = SimpleNeuralNetwork {
         sizes: vec![3, 2],
-        weights: vec![weights],
-        biases: vec![biases],
+        weights,
+        biases,
     };
 
     let outputs = nn.feed_forward(&inputs);
@@ -554,17 +568,23 @@ mod tests {
         // Layer 1 (output): 2 neurons
         // weights matrix -> 2x3
 
-        let weights = RowsMatrixBuilder::new()
+        let weight_m_layer_1 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5])
             .with_row(&[1.0, 1.0, 1.0])
             .build();
 
-        let biases = column_vector![0.1, 0.1];
+        let bias_v_layer_1 = column_vector![0.1, 0.1];
+
+        let mut weights = HashMap::new();
+        weights.insert(1, weight_m_layer_1);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, bias_v_layer_1);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![num_neurons_layer_0, num_neurons_layer_1],
-            weights: vec![weights],
-            biases: vec![biases],
+            weights,
+            biases,
         };
 
         nn
@@ -576,20 +596,25 @@ mod tests {
         let num_neurons_layer_2 = 1;
 
         // 3x2
-        let weights_0 = RowsMatrixBuilder::new()
+        let weights_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.2, 0.2])
             .with_row(&[0.4, 0.4])
             .with_row(&[0.6, 0.6])
             .build();
 
         // 1x3
-        let weights_1 = RowsMatrixBuilder::new().with_row(&[0.5, 0.5, 0.5]).build();
+        let weights_l2 = RowsMatrixBuilder::new().with_row(&[0.5, 0.5, 0.5]).build();
 
-        let biases_0 = column_vector![0.1, 0.1, 0.1];
-        let biases_1 = column_vector![0.1];
+        let biases_l1 = column_vector![0.1, 0.1, 0.1];
+        let biases_l2 = column_vector![0.1];
 
-        let weights = vec![weights_0, weights_1];
-        let biases = vec![biases_0, biases_1];
+        let mut weights = HashMap::new();
+        weights.insert(1, weights_l1);
+        weights.insert(2, weights_l2);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, biases_l1);
+        biases.insert(2, biases_l2);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -612,7 +637,7 @@ mod tests {
         // W0: 5x3
         // W1: 2x5
 
-        let weights_0 = RowsMatrixBuilder::new()
+        let weights_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.2, 0.2, 0.2])
             .with_row(&[0.4, 0.4, 0.4])
             .with_row(&[0.6, 0.6, 0.6])
@@ -620,16 +645,21 @@ mod tests {
             .with_row(&[1.0, 1.0, 1.0])
             .build();
 
-        let weights_1 = RowsMatrixBuilder::new()
+        let weights_l2 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5, 0.5, 0.5])
             .with_row(&[0.6, 0.6, 0.6, 0.6, 0.6])
             .build();
 
-        let biases_0 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
-        let biases_1 = column_vector![0.1, 0.1];
+        let biases_l1 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
+        let biases_l2 = column_vector![0.1, 0.1];
 
-        let weights = vec![weights_0, weights_1];
-        let biases = vec![biases_0, biases_1];
+        let mut weights = HashMap::new();
+        weights.insert(1, weights_l1);
+        weights.insert(2, weights_l2);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, biases_l1);
+        biases.insert(2, biases_l2);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -675,17 +705,23 @@ mod tests {
 
         let inputs = column_vector![0.0, 0.5, 1.0];
 
-        let weights = RowsMatrixBuilder::new()
+        let weight_m_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5])
             .with_row(&[1.0, 1.0, 1.0])
             .build();
 
-        let biases = column_vector![0.1, 0.1];
+        let biase_v_l1 = column_vector![0.1, 0.1];
+
+        let mut weights = HashMap::new();
+        weights.insert(1, weight_m_l1);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, biase_v_l1);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![num_neurons_layer_0, num_neurons_layer_1],
-            weights: vec![weights],
-            biases: vec![biases],
+            weights,
+            biases,
         };
 
         let outputs = nn.feed_forward(&inputs);
@@ -713,7 +749,7 @@ mod tests {
 
         let inputs = column_vector![0.0, 0.5, 1.0];
 
-        let weights_0 = RowsMatrixBuilder::new()
+        let weights_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.2, 0.2, 0.2])
             .with_row(&[0.4, 0.4, 0.4])
             .with_row(&[0.6, 0.6, 0.6])
@@ -721,27 +757,32 @@ mod tests {
             .with_row(&[1.0, 1.0, 1.0])
             .build();
 
-        let weights_1 = RowsMatrixBuilder::new()
+        let weights_l2 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5, 0.5, 0.5])
             .with_row(&[0.6, 0.6, 0.6, 0.6, 0.6])
             .build();
 
-        let biases_0 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
-        let biases_1 = column_vector![0.1, 0.1];
+        let bias_v_l1 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
+        let bias_v_l2 = column_vector![0.1, 0.1];
 
         // manually compute the correct output to use in later assertion
-        let z0 = weights_0.mult_vector(&inputs).plus(&biases_0);
+        let z0 = weights_l1.mult_vector(&inputs).plus(&bias_v_l1);
         let sz0 = sigmoid_vector(&z0);
         println!("sz0: {:?}", sz0);
 
-        let z1 = weights_1.mult_vector(&sz0).plus(&biases_1);
+        let z1 = weights_l2.mult_vector(&sz0).plus(&bias_v_l2);
         let sz1 = sigmoid_vector(&z1);
         println!("sz1: {:?}", sz1);
 
         println!("\n now doing with feed_forward");
 
-        let weights = vec![weights_0, weights_1];
-        let biases = vec![biases_0, biases_1];
+        let mut weights = HashMap::new();
+        weights.insert(1, weights_l1);
+        weights.insert(2, weights_l2);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, bias_v_l1);
+        biases.insert(2, bias_v_l2);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -781,7 +822,7 @@ mod tests {
 
         let inputs = column_vector![0.0, 0.5, 1.0];
 
-        let weights_0 = RowsMatrixBuilder::new()
+        let weights_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.2, 0.2, 0.2])
             .with_row(&[0.4, 0.4, 0.4])
             .with_row(&[0.6, 0.6, 0.6])
@@ -789,27 +830,32 @@ mod tests {
             .with_row(&[1.0, 1.0, 1.0])
             .build();
 
-        let weights_1 = RowsMatrixBuilder::new()
+        let weights_l2 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5, 0.5, 0.5])
             .with_row(&[0.6, 0.6, 0.6, 0.6, 0.6])
             .build();
 
-        let biases_0 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
-        let biases_1 = column_vector![0.1, 0.1];
+        let bias_v_l1 = column_vector![0.1, 0.1, 0.1, 0.1, 0.1];
+        let bias_v_l2 = column_vector![0.1, 0.1];
 
         // manually compute the correct output to use in later assertion
-        let z0 = weights_0.mult_vector(&inputs).plus(&biases_0);
+        let z0 = weights_l1.mult_vector(&inputs).plus(&bias_v_l1);
         let sz0 = sigmoid_vector(&z0);
         println!("sz0: {:?}", sz0);
 
-        let z1 = weights_1.mult_vector(&sz0).plus(&biases_1);
+        let z1 = weights_l2.mult_vector(&sz0).plus(&bias_v_l2);
         let sz1 = sigmoid_vector(&z1);
         println!("sz1: {:?}", sz1);
 
         println!("\n now doing with feed_forward");
 
-        let weights = vec![weights_0, weights_1];
-        let biases = vec![biases_0, biases_1];
+        let mut weights = HashMap::new();
+        weights.insert(1, weights_l1);
+        weights.insert(2, weights_l2);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, bias_v_l1);
+        biases.insert(2, bias_v_l2);
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -823,8 +869,8 @@ mod tests {
 
         let intermediates = nn.feed_forward_capturing(&inputs);
         assert_eq!(intermediates.len(), 3);
-        let final_step_values = intermediates.last().unwrap();
-        let outputs = final_step_values.activations_vector.clone();
+        let final_step_values = intermediates.get(&2).unwrap();
+        let outputs = final_step_values.activation_v.clone();
 
         println!("outputs: {:?}", outputs);
         // assert_eq!(1, 0);
@@ -952,14 +998,19 @@ mod tests {
             let inputs_v = &training_data[i_tr_ex].input_v;
             let desired_output_v = &training_data[i_tr_ex].desired_output_v;
             let intermediates = nn.feed_forward_capturing(&inputs_v);
+            assert_eq!(intermediates.len(), nn.num_layers());
+
             println!("for input {}", i_tr_ex);
             println!("intermediates");
             for i_intermediate in 0..intermediates.len() {
                 println!("intermediate {}:", i_intermediate);
                 println!(" - z_vector:");
-                println!("{}", intermediates[i_intermediate].z_vector);
+                println!("{}", intermediates.get(&i_intermediate).unwrap().z_v);
                 println!(" - activations_vector:");
-                println!("{}", intermediates[i_intermediate].activations_vector);
+                println!(
+                    "{}",
+                    intermediates.get(&i_intermediate).unwrap().activation_v
+                );
             }
             let err_vectors_this_tr_ex = nn.backprop(&desired_output_v, &intermediates);
             error_vectors_for_each_training_example.push(err_vectors_this_tr_ex);
@@ -1037,19 +1088,24 @@ mod tests {
         // W0: 3x2 (l1size x l0size)
         // W1: 1x3 (l2size x l1size)
 
-        let weights_0 = RowsMatrixBuilder::new()
+        let weights_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.2, 0.2])
             .with_row(&[0.4, 0.4])
             .with_row(&[0.6, 0.6])
             .build();
 
-        let weights_1 = RowsMatrixBuilder::new().with_row(&[0.5, 0.5, 0.5]).build();
+        let weights_l2 = RowsMatrixBuilder::new().with_row(&[0.5, 0.5, 0.5]).build();
 
-        let biases_0 = column_vector![0.1, 0.1, 0.1];
-        let biases_1 = column_vector![0.1];
+        let bias_v_l1 = column_vector![0.1, 0.1, 0.1];
+        let bias_v_l2 = column_vector![0.1];
 
-        let weights = vec![weights_0, weights_1];
-        let biases = vec![biases_0, biases_1];
+        let mut weights = HashMap::new();
+        weights.insert(1, weights_l1);
+        weights.insert(2, weights_l2);
+
+        let mut biases = HashMap::new();
+        biases.insert(1, bias_v_l1);
+        biases.insert(2, bias_v_l2);
 
         let mut nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -1112,12 +1168,12 @@ mod tests {
         let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
 
         println!("initial weights:");
-        for w in nn.weights.iter() {
+        for (l, w) in nn.weights.iter() {
             println!("{}", w);
         }
 
         println!("initial biases:");
-        for b in nn.biases.iter() {
+        for (l, b) in nn.biases.iter() {
             println!("{}", b);
         }
 
@@ -1171,14 +1227,14 @@ mod tests {
         let mut nn = SimpleNeuralNetwork::new(vec![2, 16, 16, 1]);
 
         println!("initial weights:");
-        for w in nn.weights.iter() {
+        nn.weights.values().for_each(|w| {
             println!("{}", w);
-        }
+        });
 
         println!("initial biases:");
-        for b in nn.biases.iter() {
+        nn.biases.values().for_each(|b| {
             println!("{}", b);
-        }
+        });
 
         let epocs = 2500;
         let learning_rate = 0.9;
@@ -1244,8 +1300,7 @@ mod tests {
         // input layer - no weights or biases
 
         // layer l = 1
-        let layer_1_matrix_index = 1 - 1; // because one less than num layers
-        let w1 = nn.weights.get_mut(layer_1_matrix_index).unwrap();
+        let w1 = nn.weights.get_mut(&1).unwrap();
 
         println!("weight_matrix_l1_shape: {:?}", weight_matrix_l1_shape);
         println!("w1 shape: {} x {}", w1.num_rows(), w1.num_columns());
@@ -1260,15 +1315,14 @@ mod tests {
 
         println!("w1: \n{}", w1);
 
-        let b1 = nn.biases.get_mut(layer_1_matrix_index).unwrap();
+        let b1 = nn.biases.get_mut(&1).unwrap();
         b1.set(0, 7.0);
         b1.set(1, 8.0);
         b1.set(2, 9.0);
 
         // layer l = 2 (output layer)
-        let layer_2_matrix_index = 2 - 1; // because one less than num layers
-        let w2 = nn.weights.get_mut(layer_2_matrix_index).unwrap();
-        let b2 = nn.biases.get_mut(layer_2_matrix_index).unwrap();
+        let w2 = nn.weights.get_mut(&2).unwrap();
+        let b2 = nn.biases.get_mut(&2).unwrap();
 
         w2.set(0, 0, 10.0);
         w2.set(0, 1, 11.0);
