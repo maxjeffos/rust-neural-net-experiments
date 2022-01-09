@@ -513,39 +513,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::scalar_valued_multivariable_point::ScalarValuedMultivariablePoint;
     use float_cmp::approx_eq;
     use time_test::time_test;
-
-    pub fn get_simple_two_layer_nn_for_test() -> SimpleNeuralNetwork {
-        let num_neurons_layer_0 = 3;
-        let num_neurons_layer_1 = 2;
-
-        // Layer 0 (input): 3 neurons
-        // Layer 1 (output): 2 neurons
-        // weights matrix -> 2x3
-
-        let weight_m_layer_1 = RowsMatrixBuilder::new()
-            .with_row(&[0.5, 0.5, 0.5])
-            .with_row(&[1.0, 1.0, 1.0])
-            .build();
-
-        let bias_v_layer_1 = column_vector![0.1, 0.1];
-
-        let mut weights = HashMap::new();
-        weights.insert(1, weight_m_layer_1);
-
-        let mut biases = HashMap::new();
-        biases.insert(1, bias_v_layer_1);
-
-        let nn = SimpleNeuralNetwork {
-            sizes: vec![num_neurons_layer_0, num_neurons_layer_1],
-            weights,
-            biases,
-        };
-
-        nn
-    }
 
     pub fn get_simple_get_2_3_1_nn_for_test() -> SimpleNeuralNetwork {
         let num_neurons_layer_0 = 2;
@@ -977,34 +946,7 @@ mod tests {
     const ORANGE: f64 = 0.0;
     const BLUE: f64 = 1.0;
 
-    fn get_data_set_1() -> Vec<ScalarValuedMultivariablePoint> {
-        // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
-        let training_data = vec![
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-        ];
-        training_data
-    }
-
-    fn get_data_set_1b() -> Vec<NDTrainingDataPoint> {
+    fn get_data_set_1() -> Vec<NDTrainingDataPoint> {
         // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
         let training_data = vec![
             NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
@@ -1034,7 +976,7 @@ mod tests {
     #[test]
     fn test_nn() {
         time_test!();
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 3 x 1
         let num_neurons_layer_0 = 2;
@@ -1118,7 +1060,7 @@ mod tests {
     fn test_nn_using_constructor_for_random_initial_weights_and_biases() {
         time_test!();
         // try the same data set as before but use the NN constructor to initialize with random weights/biases
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 3 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
@@ -1177,7 +1119,7 @@ mod tests {
         time_test!();
 
         // try more layers and more neurons in the hidden layers to see if I can improve number of epocs
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 16 x 16 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 16, 16, 1]);
