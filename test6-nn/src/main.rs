@@ -62,14 +62,12 @@ fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> C
 pub struct SimpleNeuralNetwork {
     sizes: Vec<LayerIndex>,
 
-    // A vec of weight matricies - one for each inter-layer step
-    // For each weight matrix, a row corresponds to the input neurons in the previous layer
-    // and a particular neuron in the next layer.
-    // Thus, the dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
+    // A HashMap of the weights keyed by the layer index.
+    // The dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
     weights: HashMap<LayerIndex, Matrix>,
 
-    // A vec of ColumnVectors - one for inter-layer step.
-    // Each vector will have length equal to the number of neurons in the next layer.
+    // A HashMap of the biases keyed by the layer index.
+    // The dimension of each ColumnVector will be [# number neurons in the layer]
     biases: HashMap<LayerIndex, ColumnVector>,
 }
 
@@ -424,7 +422,6 @@ impl SimpleNeuralNetwork {
                 let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
                 // unroll the actual gradients
                 let d_vec = self.unroll_gradients(&gradients);
-                // compare the two vectors and fail (panic?) if it fails
 
                 let ed = euclidian_distance(&approx_gradients_big_v, &d_vec);
                 println!("ed: {}", ed);
@@ -516,7 +513,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::linalg::ColumnsMatrixBuilder;
     use common::scalar_valued_multivariable_point::ScalarValuedMultivariablePoint;
     use float_cmp::approx_eq;
     use time_test::time_test;
