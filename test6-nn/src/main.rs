@@ -13,6 +13,23 @@ struct FeedForwardIntermediates {
     activation_v: ColumnVector,
 }
 
+impl FeedForwardIntermediates {
+    fn new_from(
+        maybe_z_v: Option<&ColumnVector>,
+        activation_v: &ColumnVector,
+    ) -> FeedForwardIntermediates {
+        let z_v = match maybe_z_v {
+            Some(z_v) => z_v.clone(),
+            None => ColumnVector::fill_new(f64::NAN, activation_v.num_elements()),
+        };
+
+        FeedForwardIntermediates {
+            z_v,
+            activation_v: activation_v.clone(),
+        }
+    }
+}
+
 pub struct CheckOptions {
     gradient_checking: bool,
     cost_decreasing_check: bool,
@@ -45,14 +62,12 @@ fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> C
 pub struct SimpleNeuralNetwork {
     sizes: Vec<LayerIndex>,
 
-    // A vec of weight matricies - one for each inter-layer step
-    // For each weight matrix, a row corresponds to the input neurons in the previous layer
-    // and a particular neuron in the next layer.
-    // Thus, the dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
+    // A HashMap of the weights keyed by the layer index.
+    // The dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
     weights: HashMap<LayerIndex, Matrix>,
 
-    // A vec of ColumnVectors - one for inter-layer step.
-    // Each vector will have length equal to the number of neurons in the next layer.
+    // A HashMap of the biases keyed by the layer index.
+    // The dimension of each ColumnVector will be [# number neurons in the layer]
     biases: HashMap<LayerIndex, ColumnVector>,
 }
 
@@ -138,14 +153,7 @@ impl SimpleNeuralNetwork {
 
         for l in 0..self.num_layers() {
             if l == 0 {
-                intermediates.insert(
-                    l,
-                    FeedForwardIntermediates {
-                        // Filling the layer 0 z vector with NAN (Not a Number) because it is never used and isn't a valid computation.
-                        z_v: ColumnVector::fill_new(f64::NAN, activation_v.num_elements()),
-                        activation_v: activation_v.clone(),
-                    },
-                );
+                intermediates.insert(l, FeedForwardIntermediates::new_from(None, &activation_v));
             } else {
                 let z_v = z(
                     self.weights.get(&l).unwrap(),
@@ -153,13 +161,9 @@ impl SimpleNeuralNetwork {
                     &activation_v,
                 );
                 activation_v = sigmoid_vector(&z_v);
-
                 intermediates.insert(
                     l,
-                    FeedForwardIntermediates {
-                        z_v: z_v.clone(),
-                        activation_v: activation_v.clone(),
-                    },
+                    FeedForwardIntermediates::new_from(Some(&z_v), &activation_v),
                 );
             }
         }
@@ -217,15 +221,14 @@ impl SimpleNeuralNetwork {
     }
 
     /// reshape theta_v in accordance with the sizes of the layers
-    fn reshape_weights_and_biases(
-        &self,
-        big_theta_v: &[f64],
-    ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
+    fn reshape_weights_and_biases(&self, big_theta_v: &[f64]) -> SimpleNeuralNetwork {
         // we know the number of layers and the size of each one
         // so we know what size of weights and biases we need
         // just need to pull things out correctly form big_theta_v.
 
-        let mut weights_and_biases = HashMap::new();
+        let mut weights = HashMap::new();
+        let mut biases = HashMap::new();
+
         let mut ptr: usize = 0;
 
         for l in 1..self.num_layers() {
@@ -235,60 +238,16 @@ impl SimpleNeuralNetwork {
             ptr += w_shape.data_length();
             let b = ColumnVector::new(&big_theta_v[ptr..(ptr + self.sizes[l])]);
             ptr += self.sizes[l];
-            weights_and_biases.insert(l, (w, b));
+
+            weights.insert(l, w);
+            biases.insert(l, b);
         }
 
-        weights_and_biases
-    }
-
-    pub fn cost_reshaped_set(
-        &self,
-        training_data: &Vec<NDTrainingDataPoint>,
-        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
-    ) -> f64 {
-        training_data
-            .iter()
-            .map(|tr_ex| self.cost_reshaped_single(&tr_ex, &self.sizes, wb))
-            .sum::<f64>()
-            / training_data.len() as f64
-    }
-
-    pub fn cost_reshaped_single(
-        &self,
-        tr_ex: &NDTrainingDataPoint,
-        sizes: &Vec<usize>,
-        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
-    ) -> f64 {
-        if tr_ex.input_v.num_elements() != self.sizes[0] {
-            panic!(
-                "input_v must have the same number of elements as the number of neurons in the input layer"
-            );
+        SimpleNeuralNetwork {
+            sizes: self.sizes.clone(),
+            weights,
+            biases,
         }
-
-        let output_v = SimpleNeuralNetwork::ff(&tr_ex.input_v, sizes, wb);
-
-        if output_v.num_elements() != tr_ex.desired_output_v.num_elements() {
-            panic!("input_v and desired_output_v must have the same length");
-        }
-
-        quadratic_cost(&tr_ex.desired_output_v, &output_v)
-    }
-
-    pub fn ff(
-        input_v: &ColumnVector,
-        sizes: &Vec<usize>,
-        wb: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
-    ) -> ColumnVector {
-        let mut activation_v = input_v.clone();
-
-        for l in 1..sizes.len() {
-            let w = &wb.get(&l).unwrap().0;
-            let b = &wb.get(&l).unwrap().1;
-            let z_v = z(w, b, &activation_v);
-            activation_v = sigmoid_vector(&z_v);
-        }
-
-        activation_v
     }
 
     /// Used for gradient checking
@@ -300,12 +259,12 @@ impl SimpleNeuralNetwork {
             let orig_i_value = big_theta_v[i];
 
             big_theta_v[i] = orig_i_value + GRADIENT_CHECK_EPSILON;
-            let wbs = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_plus_epsilon = self.cost_reshaped_set(training_data, &wbs);
+            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_plus_epsilon = temp_nn.cost_training_set(&training_data);
 
             big_theta_v[i] = orig_i_value - GRADIENT_CHECK_EPSILON;
-            let wbs = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_minus_epsilon = self.cost_reshaped_set(training_data, &wbs);
+            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_minus_epsilon = temp_nn.cost_training_set(training_data);
 
             big_theta_v[i] = orig_i_value; // important - restore the orig value
 
@@ -463,7 +422,6 @@ impl SimpleNeuralNetwork {
                 let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
                 // unroll the actual gradients
                 let d_vec = self.unroll_gradients(&gradients);
-                // compare the two vectors and fail (panic?) if it fails
 
                 let ed = euclidian_distance(&approx_gradients_big_v, &d_vec);
                 println!("ed: {}", ed);
@@ -555,40 +513,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::linalg::ColumnsMatrixBuilder;
-    use common::scalar_valued_multivariable_point::ScalarValuedMultivariablePoint;
     use float_cmp::approx_eq;
     use time_test::time_test;
-
-    pub fn get_simple_two_layer_nn_for_test() -> SimpleNeuralNetwork {
-        let num_neurons_layer_0 = 3;
-        let num_neurons_layer_1 = 2;
-
-        // Layer 0 (input): 3 neurons
-        // Layer 1 (output): 2 neurons
-        // weights matrix -> 2x3
-
-        let weight_m_layer_1 = RowsMatrixBuilder::new()
-            .with_row(&[0.5, 0.5, 0.5])
-            .with_row(&[1.0, 1.0, 1.0])
-            .build();
-
-        let bias_v_layer_1 = column_vector![0.1, 0.1];
-
-        let mut weights = HashMap::new();
-        weights.insert(1, weight_m_layer_1);
-
-        let mut biases = HashMap::new();
-        biases.insert(1, bias_v_layer_1);
-
-        let nn = SimpleNeuralNetwork {
-            sizes: vec![num_neurons_layer_0, num_neurons_layer_1],
-            weights,
-            biases,
-        };
-
-        nn
-    }
 
     pub fn get_simple_get_2_3_1_nn_for_test() -> SimpleNeuralNetwork {
         let num_neurons_layer_0 = 2;
@@ -703,7 +629,7 @@ mod tests {
         // L N-1: 2 neurons
         // weights matrix -> 2x3
 
-        let inputs = column_vector![0.0, 0.5, 1.0];
+        let input_v = column_vector![0.0, 0.5, 1.0];
 
         let weight_m_l1 = RowsMatrixBuilder::new()
             .with_row(&[0.5, 0.5, 0.5])
@@ -724,7 +650,7 @@ mod tests {
             biases,
         };
 
-        let outputs = nn.feed_forward(&inputs);
+        let outputs = nn.feed_forward(&input_v);
         assert_eq!(outputs.num_elements(), 2);
         assert_eq!(outputs.get(0), 0.7005671424739729);
         assert_eq!(outputs.get(1), 0.8320183851339245);
@@ -732,7 +658,7 @@ mod tests {
         // now see if I can do this from the unrolled big_theta_v
         let big_theta_v = nn.unroll_weights_and_biases();
         let reshaped = nn.reshape_weights_and_biases(&big_theta_v);
-        let ff_fn_output_v = SimpleNeuralNetwork::ff(&inputs, &nn.sizes, &reshaped);
+        let ff_fn_output_v = reshaped.feed_forward(&input_v);
         assert_eq!(ff_fn_output_v.num_elements(), 2);
         assert_eq!(ff_fn_output_v.get(0), 0.7005671424739729);
         assert_eq!(ff_fn_output_v.get(1), 0.8320183851339245);
@@ -984,8 +910,7 @@ mod tests {
         // now do the same cost test with big_theta_v
         let big_theta_v = nn.unroll_weights_and_biases();
         let reshaped = nn.reshape_weights_and_biases(&big_theta_v);
-        assert_eq!(reshaped.len(), 2);
-        let cost_big_theta_v = nn.cost_reshaped_set(&training_data, &reshaped);
+        let cost_big_theta_v = reshaped.cost_training_set(&training_data);
         assert_eq!(cost_big_theta_v, c);
 
         // from here on, I'm testing the towards_backprop stuff
@@ -1021,34 +946,7 @@ mod tests {
     const ORANGE: f64 = 0.0;
     const BLUE: f64 = 1.0;
 
-    fn get_data_set_1() -> Vec<ScalarValuedMultivariablePoint> {
-        // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
-        let training_data = vec![
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(-2.0, -2.0, ORANGE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-            ScalarValuedMultivariablePoint::new_3d(2.0, 2.0, BLUE),
-        ];
-        training_data
-    }
-
-    fn get_data_set_1b() -> Vec<NDTrainingDataPoint> {
+    fn get_data_set_1() -> Vec<NDTrainingDataPoint> {
         // fake data roughly based on https://playground.tensorflow.org/#activation=tanh&batchSize=10&dataset=gauss&regDataset=reg-plane&learningRate=0.03&regularizationRate=0&noise=0&networkShape=3,1&seed=0.22934&showTestData=false&discretize=false&percTrainData=50&x=true&y=true&xTimesY=false&xSquared=false&ySquared=false&cosX=false&sinX=false&cosY=false&sinY=false&collectStats=false&problem=classification&initZero=false&hideText=false
         let training_data = vec![
             NDTrainingDataPoint::new(column_vector![-2.0, -2.0], column_vector![ORANGE]),
@@ -1078,7 +976,7 @@ mod tests {
     #[test]
     fn test_nn() {
         time_test!();
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 3 x 1
         let num_neurons_layer_0 = 2;
@@ -1162,7 +1060,7 @@ mod tests {
     fn test_nn_using_constructor_for_random_initial_weights_and_biases() {
         time_test!();
         // try the same data set as before but use the NN constructor to initialize with random weights/biases
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 3 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 1]);
@@ -1221,7 +1119,7 @@ mod tests {
         time_test!();
 
         // try more layers and more neurons in the hidden layers to see if I can improve number of epocs
-        let training_data = get_data_set_1b();
+        let training_data = get_data_set_1();
 
         // 2 x 16 x 16 x 1
         let mut nn = SimpleNeuralNetwork::new(vec![2, 16, 16, 1]);
@@ -1408,21 +1306,19 @@ mod tests {
             17.0,
         ];
 
-        let wbs = nn.reshape_weights_and_biases(&big_theta_v);
+        let temp_nn = nn.reshape_weights_and_biases(&big_theta_v);
 
-        assert_eq!(wbs.len(), 2);
-        let wb1 = wbs.get(&1).unwrap();
-        let wb2 = wbs.get(&2).unwrap();
+        assert_eq!(temp_nn.num_layers(), 3);
 
-        let w1 = &wb1.0;
-        let b1 = &wb1.1;
+        let w1 = temp_nn.weights.get(&1).unwrap();
+        let b1 = temp_nn.biases.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(w1.data.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         assert_eq!(b1.num_elements(), 3);
         assert_eq!(b1.get_data_as_slice(), &[7.0, 8.0, 9.0]);
 
-        let w2 = &wb2.0;
-        let b2 = &wb2.1;
+        let w2 = temp_nn.weights.get(&2).unwrap();
+        let b2 = temp_nn.biases.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(2, 3));
         assert_eq!(w2.data.as_slice(), &[10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
         assert_eq!(b2.num_elements(), 2);
