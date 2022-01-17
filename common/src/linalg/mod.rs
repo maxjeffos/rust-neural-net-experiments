@@ -2,6 +2,7 @@ use rand::distributions::{Distribution, Standard, Uniform};
 use rand::Rng;
 use rand_distr::num_traits::Float;
 use rand_distr::Normal;
+// use rayon::prelude::*;
 use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -66,7 +67,7 @@ impl MatrixShape {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Matrix {
     num_rows: usize,
     num_columns: usize,
@@ -291,6 +292,16 @@ impl Matrix {
                 for k in 0..self.num_columns {
                     sum += self.get(i, k) * other.get(k, j);
                 }
+
+                // This actually seems to make things slower
+                // But maybe for certain matrices (ex very big ones) it is faster?
+                // Also, a more intelligent way to break this up between threads might be better (more efficient)
+                // For example, sending chunks of 50 or 100 k's to each thread, rather than one per thread.
+                // let sum = (0..self.num_columns)
+                //     .into_par_iter()
+                //     .map(|k| self.get(i, k) * other.get(k, j))
+                //     .sum::<f64>();
+
                 result.set(i, j, sum);
             }
         }
@@ -508,7 +519,7 @@ impl From<ColumnVector> for Matrix {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnVector {
     inner_matrix: Matrix,
 }
@@ -535,10 +546,23 @@ impl<'a> Iterator for IterWith<'a> {
 }
 
 impl ColumnVector {
+    /// Warning: this makes a clone of the incoming data
+    /// So if you have a Vec<f64> and you're ok consuming it, it's better to use from_vec
     pub fn new(data: &[f64]) -> ColumnVector {
         ColumnVector {
             inner_matrix: Matrix::new_column_vector(data),
         }
+    }
+
+    // because new() ends up making a copy of the incoming data which is inefficient when not required
+    pub fn from_vec(data: Vec<f64>) -> ColumnVector {
+        let inner_matrix = Matrix {
+            num_rows: data.len(),
+            num_columns: 1,
+            data,
+        };
+
+        ColumnVector { inner_matrix }
     }
 
     pub fn new_zero_vector(num_rows: usize) -> ColumnVector {
@@ -594,7 +618,7 @@ impl ColumnVector {
         for i in 0..self.num_elements() {
             data.push(self.get(i) + other.get(i));
         }
-        ColumnVector::new(&data)
+        ColumnVector::from_vec(data)
     }
 
     pub fn plus_in_place(&mut self, other: &ColumnVector) {
@@ -624,7 +648,7 @@ impl ColumnVector {
         for i in 0..self.num_elements() {
             data.push(self.get(i) - other.get(i));
         }
-        ColumnVector::new(&data)
+        ColumnVector::from_vec(data)
     }
 
     pub fn minus_in_place(&mut self, other: &ColumnVector) {
@@ -640,7 +664,7 @@ impl ColumnVector {
             .iter()
             .map(|x| *x * scalar)
             .collect::<Vec<f64>>();
-        ColumnVector::new(&data)
+        ColumnVector::from_vec(data)
     }
 
     pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
@@ -658,7 +682,7 @@ impl ColumnVector {
             .map(|x| *x / scalar)
             .collect::<Vec<f64>>();
 
-        ColumnVector::new(&data)
+        ColumnVector::from_vec(data)
     }
 
     pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
@@ -697,7 +721,7 @@ impl ColumnVector {
         for (x, y) in self.iter_with(other) {
             data.push(x * y);
         }
-        ColumnVector::new(&data)
+        ColumnVector::from_vec(data)
     }
 
     pub fn hadamard_product_in_place(&mut self, other: &ColumnVector) {
@@ -733,6 +757,31 @@ impl ColumnVector {
     // even need to copy the data, just re-shape it.
     pub fn transpose(&self) -> Matrix {
         self.inner_matrix.transpose()
+    }
+
+    pub fn transpose_into_row_vector_matrix(mut self) -> Matrix {
+        let orig_num_rows = self.inner_matrix.num_rows;
+        let orig_num_cols = self.inner_matrix.num_columns;
+        self.inner_matrix.num_rows = orig_num_cols;
+        self.inner_matrix.num_columns = orig_num_rows;
+        self.inner_matrix
+    }
+
+    // If you have to Vectors, u and v, then the outer product u x v is u x v.transpose()
+    // So this is sinlge operation to do the equivalent of u x v.transpose()
+    pub fn outer_product(&self, other: &ColumnVector) -> Matrix {
+        let mut result = Matrix::new_zero_matrix(self.num_elements(), other.num_elements());
+
+        let self_num_rows = self.num_elements();
+        let other_num_columns = other.num_elements();
+
+        for i in 0..self_num_rows {
+            for j in 0..other_num_columns {
+                let sum = self.get(i) * other.get(j);
+                result.set(i, j, sum);
+            }
+        }
+        result
     }
 
     pub fn into_value(self) -> f64 {
@@ -1767,6 +1816,29 @@ mod column_vector_tests {
         assert_eq!(m.get(0, 0), 1.0);
         assert_eq!(m.get(0, 1), 2.0);
         assert_eq!(m.get(0, 2), 3.0);
+    }
+
+    #[test]
+    fn transpose_into_row_vector_matrix_works() {
+        let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        let m = cv.transpose_into_row_vector_matrix();
+        println!("m: \n{}", m);
+        assert_eq!(m.num_rows(), 1);
+        assert_eq!(m.num_columns(), 3);
+        assert_eq!(m.get(0, 0), 1.0);
+        assert_eq!(m.get(0, 1), 2.0);
+        assert_eq!(m.get(0, 2), 3.0);
+    }
+
+    #[test]
+    fn test_outer_product() {
+        let v1 = column_vector![1.0, 2.0, 3.0];
+        let v2 = column_vector![1.0, 2.0, 3.0, 4.0];
+        let v2t = v2.transpose();
+        let m = v1.mult_matrix(&v2t);
+        let m_outer_product = v1.outer_product(&v2);
+        assert_eq!(m.shape(), m_outer_product.shape());
+        assert_eq!(m.data, m_outer_product.data);
     }
 
     #[test]
