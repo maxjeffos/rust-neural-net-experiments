@@ -1,12 +1,22 @@
 use std::collections::HashMap;
 
+use common::activation_functions::sigmoid;
+use common::column_vec_of_random_values_from_distribution;
 use common::datapoints::NDTrainingDataPoint;
 use common::linalg::{euclidian_distance, euclidian_length, square};
-use common::linalg::{ColumnVector, Matrix, MatrixShape, RowsMatrixBuilder};
-use common::sigmoid::{sigmoid_prime_vector, sigmoid_vector};
-use common::{column_vec_of_random_values_from_distribution, column_vector};
+use common::linalg::{ColumnVector, Matrix, MatrixShape};
+use metrics::SimpleTimer;
+use rand;
+use rand::Rng;
+use rayon::prelude::*;
+use std::sync::{Arc, Mutex};
 
 type LayerIndex = usize;
+
+pub enum ActivationFunction {
+    Sigmoid,
+    ReLU,
+}
 
 struct FeedForwardIntermediates {
     z_v: ColumnVector,
@@ -127,13 +137,19 @@ impl SimpleNeuralNetwork {
     pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
         let mut activation_v = input_activations.clone();
 
+        // let activation_fn = match self.activation_function {
+        //     ActivationFunction::Sigmoid => sigmoid::activate_vector,
+        //     ActivationFunction::ReLU => relu::activate_vector,
+        // };
+        let activation_fn = sigmoid::activate_vector;
+
         for l in 1..self.sizes.len() {
             let z_v = z(
                 self.weights.get(&l).unwrap(),
                 self.biases.get(&l).unwrap(),
                 &activation_v,
             );
-            activation_v = sigmoid_vector(&z_v);
+            activation_v = activation_fn(&z_v);
         }
 
         activation_v
@@ -151,6 +167,12 @@ impl SimpleNeuralNetwork {
         let mut intermediates = HashMap::new();
         let mut activation_v = input_activations.clone();
 
+        // let activation_fn = match self.activation_function {
+        //     ActivationFunction::Sigmoid => sigmoid::activate_vector,
+        //     ActivationFunction::ReLU => relu::activate_vector,
+        // };
+        let activation_fn = sigmoid::activate_vector;
+
         for l in 0..self.num_layers() {
             if l == 0 {
                 intermediates.insert(l, FeedForwardIntermediates::new_from(None, &activation_v));
@@ -160,7 +182,7 @@ impl SimpleNeuralNetwork {
                     self.biases.get(&l).unwrap(),
                     &activation_v,
                 );
-                activation_v = sigmoid_vector(&z_v);
+                activation_v = activation_fn(&z_v);
                 intermediates.insert(
                     l,
                     FeedForwardIntermediates::new_from(Some(&z_v), &activation_v),
@@ -178,18 +200,24 @@ impl SimpleNeuralNetwork {
             );
         }
 
-        let outputs = self.feed_forward(&tr_ex.input_v);
+        let output_v = self.feed_forward(&tr_ex.input_v);
 
-        if outputs.num_elements() != tr_ex.desired_output_v.num_elements() {
-            panic!("input_v and desired_output_v must have the same length");
+        if output_v.num_elements() != tr_ex.desired_output_v.num_elements() {
+            println!("output_v len: {}", output_v.num_elements());
+            println!(
+                "r_ex.desired_output_v len: {}",
+                tr_ex.desired_output_v.num_elements()
+            );
+
+            panic!("output_v and desired_output_v must have the same length");
         }
 
-        quadratic_cost(&tr_ex.desired_output_v, &outputs)
+        quadratic_cost(&tr_ex.desired_output_v, &output_v)
     }
 
-    pub fn cost_training_set(&self, training_data: &Vec<NDTrainingDataPoint>) -> f64 {
+    pub fn cost_training_set(&self, training_data: &[NDTrainingDataPoint]) -> f64 {
         training_data
-            .iter()
+            .par_iter()
             .map(|tr_ex| self.cost_single_tr_ex(tr_ex))
             .sum::<f64>()
             / training_data.len() as f64
@@ -236,6 +264,8 @@ impl SimpleNeuralNetwork {
             let w_data = &big_theta_v[ptr..(ptr + w_shape.data_length())];
             let w = Matrix::new_with_shape_and_values(&w_shape, w_data);
             ptr += w_shape.data_length();
+            // TODO: see if there's a way to do this with ColumnVector::from_vec because that would be without cloning
+            // and could significantly speed this up since big_theta_v can be really huge
             let b = ColumnVector::new(&big_theta_v[ptr..(ptr + self.sizes[l])]);
             ptr += self.sizes[l];
 
@@ -283,9 +313,15 @@ impl SimpleNeuralNetwork {
         desired_output_v: &ColumnVector,
         output_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
+        // let act_prime_vector = match self.activation_function {
+        //     ActivationFunction::Sigmoid => sigmoid::activate_prime_vector,
+        //     ActivationFunction::ReLU => relu::activate_prime_vector,
+        // };
+        let act_prime_vector = sigmoid::activate_prime_vector;
+
         output_activation_v
             .minus(desired_output_v)
-            .hadamard_product_chaining(&sigmoid_prime_vector(output_layer_z_v))
+            .hadamard_product_chaining(&act_prime_vector(output_layer_z_v))
     }
 
     // Backprop Equation BP2 from the Neilson book
@@ -297,10 +333,16 @@ impl SimpleNeuralNetwork {
     ) -> ColumnVector {
         let weight_matrix = self.weights.get(&(layer + 1)).unwrap();
 
+        // let act_prime_vector = match self.activation_function {
+        //     ActivationFunction::Sigmoid => sigmoid::activate_prime_vector,
+        //     ActivationFunction::ReLU => relu::activate_prime_vector,
+        // };
+        let act_prime_vector = sigmoid::activate_prime_vector;
+
         weight_matrix
             .transpose()
             .mult_vector(plus_one_layer_error_v)
-            .hadamard_product_chaining(&sigmoid_prime_vector(this_layer_z_v))
+            .hadamard_product_chaining(&act_prime_vector(this_layer_z_v))
     }
 
     /// Returns a Vec of column vectors representing the errors at each neuron at each layer from L-1 to 1
@@ -327,7 +369,7 @@ impl SimpleNeuralNetwork {
                 self.err_last_layer(&activations_v, desired_output_v, &z_v)
             } else {
                 let error_vector_for_plus_one_layer = error_vectors.get(&(l + 1)).unwrap();
-                println!("in backprop, l = {}", l);
+                // println!("in backprop, l = {}", l);
                 self.err_non_last_layer(l, error_vector_for_plus_one_layer, z_v)
             };
 
@@ -378,6 +420,82 @@ impl SimpleNeuralNetwork {
         gradients
     }
 
+    fn compute_gradients_par(
+        &mut self,
+        per_tr_ex_data: &Vec<(
+            HashMap<usize, FeedForwardIntermediates>,
+            HashMap<usize, ColumnVector>,
+        )>, // outer Vec is per training example
+    ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
+        let mut gradients = HashMap::new();
+        let num_training_examples = per_tr_ex_data.len();
+
+        for l in (1..self.num_layers()).rev() {
+            // let mut weights_partials_matrix_avg =
+            //     Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
+            // let mut bias_partials_vector_avg = ColumnVector::new_zero_vector(self.sizes[l]);
+
+            let mut weights_partials_matrix_avg = Arc::new(Mutex::new(Some(
+                Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]),
+            )));
+            let mut bias_partials_vector_avg = Arc::new(Mutex::new(Some(
+                ColumnVector::new_zero_vector(self.sizes[l]),
+            )));
+
+            // let mut magic_v = Arc::new(Mutex::new(Some(Vec::<usize>::new())));
+
+            per_tr_ex_data
+                .par_iter()
+                .for_each(|(intermediates, error_vectors)| {
+                    let prev_layer_activations_v =
+                        &intermediates.get(&(l - 1)).unwrap().activation_v;
+
+                    let this_layer_err_v = error_vectors.get(&l).unwrap();
+
+                    // let prev_layer_activations_v_transpose = prev_layer_activations_v.transpose();
+                    // let weights_grad =
+                    //     this_layer_err_v.mult_matrix(&prev_layer_activations_v_transpose);
+
+                    let weights_grad = this_layer_err_v.outer_product(&prev_layer_activations_v);
+
+                    let mut weights_partials_matrix_avg =
+                        weights_partials_matrix_avg.lock().unwrap();
+                    let mut bias_partials_vector_avg = bias_partials_vector_avg.lock().unwrap();
+
+                    weights_partials_matrix_avg
+                        .as_mut()
+                        .unwrap()
+                        .add_in_place(&weights_grad);
+                    bias_partials_vector_avg
+                        .as_mut()
+                        .unwrap()
+                        .plus_in_place(this_layer_err_v);
+
+                    // weights_partials_matrix_avg.add_in_place(&weights_grad);
+                    // bias_partials_vector_avg.plus_in_place(this_layer_err_v);
+                });
+
+            let mut weights_partials_matrix_avg = weights_partials_matrix_avg.lock().unwrap();
+            let mut bias_partials_vector_avg = bias_partials_vector_avg.lock().unwrap();
+
+            weights_partials_matrix_avg
+                .as_mut()
+                .unwrap()
+                .divide_by_scalar_in_place(num_training_examples as f64);
+            bias_partials_vector_avg
+                .as_mut()
+                .unwrap()
+                .divide_by_scalar_in_place(num_training_examples as f64);
+
+            let w = weights_partials_matrix_avg.take().unwrap();
+            let b = bias_partials_vector_avg.take().unwrap();
+
+            gradients.insert(l, (w, b));
+        }
+
+        gradients
+    }
+
     pub fn train(
         &mut self,
         training_data: &Vec<NDTrainingDataPoint>,
@@ -414,6 +532,11 @@ impl SimpleNeuralNetwork {
                 let errors = self.backprop(&tr_ex.desired_output_v, &intermediates);
                 per_tr_ex_data.push((intermediates, errors));
             });
+
+            println!(
+                "finished ff for all training points - epoch {}",
+                epocs_count
+            );
 
             // note: compute_gradients takes data for ALL training examples
             let mut gradients = self.compute_gradients(&per_tr_ex_data);
@@ -471,6 +594,159 @@ impl SimpleNeuralNetwork {
             // TODO: stop on convergence
         }
 
+        let final_cost = self.cost_training_set(&training_data);
+        println!(
+            "\ncost across entire training set after {} epocs: {}",
+            epocs, final_cost,
+        );
+    }
+
+    pub fn train_stochastic(
+        &mut self,
+        training_data: &Vec<NDTrainingDataPoint>,
+        epocs: usize,
+        learning_rate: f64,
+        mini_batch_size: usize,
+        check_options: Option<CheckOptions>,
+    ) {
+        println!("computing initial cross accross entire dataset...");
+        let mut t_init_cost = SimpleTimer::start_new("t_init_cost");
+        let initial_cost = self.cost_training_set(&training_data);
+        t_init_cost.stop();
+        println!("initial cost across entire training set: {}", initial_cost);
+        println!("t_init_cost: {}", t_init_cost);
+
+        // here's what this does:
+        // for epocs
+        //     for each training example
+        //         feed forward, capturing intermediates
+        //         backpropagate to compute errors at each neuron of each layer
+        //     compute gradients for w and b
+        //     update weights and biases
+
+        let mut epocs_count = 0;
+        let mut prev_cost = initial_cost;
+
+        let check_options = check_options.unwrap_or(CheckOptions::no_checks());
+        let num_samples = training_data.len();
+
+        loop {
+            if epocs_count >= epocs {
+                println!("stopping after {} epocs", epocs_count);
+                break;
+            }
+
+            let mut mini_batch_start = 0;
+            let mut mini_batch_end = num_samples;
+
+            if mini_batch_size < num_samples {
+                // println!("num_samples: {}", num_samples);
+                // let mini_batch_size = 200;
+                let max_starting_point = num_samples - mini_batch_size;
+                // println!("max_starting_point: {}", max_starting_point);
+                mini_batch_start = rand::thread_rng().gen_range(0..max_starting_point); // note the upper limit is exclusive
+                mini_batch_end = mini_batch_start + mini_batch_size; // this will be exclusive when used in the slice range
+            }
+
+            println!(
+                "\nstarting mini batch from {} to {}",
+                mini_batch_start, mini_batch_end
+            );
+
+            let tr_data_mini_batch = &training_data[mini_batch_start..mini_batch_end];
+
+            // println!("mini batch size: {}", tr_data_mini_batch.len());
+
+            let mut t_mini_batch_ff = SimpleTimer::start_new("t_mini_batch_ff");
+
+            let per_tr_ex_data = tr_data_mini_batch
+                .par_iter()
+                .map(|tr_ex| {
+                    let intermediates = self.feed_forward_capturing(&tr_ex.input_v);
+                    let errors = self.backprop(&tr_ex.desired_output_v, &intermediates);
+
+                    (intermediates, errors)
+                })
+                .collect::<Vec<(
+                    HashMap<usize, FeedForwardIntermediates>,
+                    HashMap<usize, ColumnVector>,
+                )>>();
+
+            // non ||: 3800ms
+            t_mini_batch_ff.stop();
+            println!("t_mini_batch_ff (all data points): {}", t_mini_batch_ff);
+
+            println!(
+                "finished ff for all training points - epoch {}",
+                epocs_count
+            );
+
+            // note: compute_gradients takes data for ALL training examples
+            let mut t_compute_gradients = SimpleTimer::start_new("t_compute_gradients");
+
+            let mut gradients = self.compute_gradients_par(&per_tr_ex_data);
+
+            t_compute_gradients.stop();
+            println!(
+                "t_compute_gradients epoch {}: {}",
+                epocs_count, t_compute_gradients
+            );
+
+            // if check_options.gradient_checking {
+            //     let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
+            //     // unroll the actual gradients
+            //     let d_vec = self.unroll_gradients(&gradients);
+
+            //     let ed = euclidian_distance(&approx_gradients_big_v, &d_vec);
+            //     println!("ed: {}", ed);
+
+            //     if ed > GRADIENT_CHECK_EPSILON_SQUARED {
+            //         panic!("failed gradient check");
+            //     }
+
+            //     let normalized_distance = euclidian_distance(&approx_gradients_big_v, &d_vec)
+            //         / (euclidian_length(&approx_gradients_big_v) + euclidian_length(&d_vec));
+
+            //     if normalized_distance > GRADIENT_CHECK_EPSILON_SQUARED {
+            //         panic!("failed gradient check");
+            //     }
+            // }
+
+            // update the weights and biases
+            // TODO: extract to method for easy testing
+            gradients
+                .iter_mut()
+                .for_each(|(layer_index, (weights_grad, bias_grad))| {
+                    let layer_index = *layer_index;
+
+                    weights_grad.multiply_by_scalar_in_place(learning_rate);
+                    bias_grad.multiply_by_scalar_in_place(learning_rate);
+
+                    let weights = self.weights.get_mut(&layer_index).unwrap();
+                    let biases = self.biases.get_mut(&layer_index).unwrap();
+
+                    weights.subtract_in_place(&weights_grad);
+                    biases.minus_in_place(&bias_grad);
+                });
+
+            if check_options.cost_decreasing_check {
+                let cost = self.cost_training_set(&training_data);
+                println!("cost after epoch {}: {}", epocs_count, cost);
+                if cost > prev_cost {
+                    panic!(
+                        "cost increased from {} to {} on epoc {}",
+                        prev_cost, cost, epocs_count
+                    );
+                }
+                prev_cost = cost;
+            }
+
+            epocs_count += 1;
+
+            // TODO: stop on convergence
+        }
+
+        println!("computing final cross accross entire dataset...");
         let final_cost = self.cost_training_set(&training_data);
         println!(
             "\ncost across entire training set after {} epocs: {}",
@@ -693,41 +969,59 @@ impl NeuralNetworkBuilder {
 }
 
 fn main() {
-    // 3x2 network
-    // single weights / biases
-    // weights matrix -> 2x3
+    let (training_data, test_data) = mnist_data::get_mnist_data(100, 50);
+    println!("got the MNIST training data");
 
-    let inputs = column_vector![0.0, 0.5, 1.0];
-
-    let weight_m_layer_1 = RowsMatrixBuilder::new()
-        .with_row(&[0.5, 0.5, 0.5])
-        .with_row(&[1.0, 1.0, 1.0])
+    let mut nn = NeuralNetworkBuilder::new()
+        .with_input_layer(784)
+        .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+        .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+        .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+        .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+        .with_hidden_layer(50, BuilderWeightsAndBiasesConfig::RandomBasic)
+        .with_output_layer(10, BuilderWeightsAndBiasesConfig::RandomBasic)
         .build();
 
-    let bias_v_layer_1 = column_vector![0.1, 0.1];
-
-    let mut weights = HashMap::new();
-    weights.insert(1, weight_m_layer_1);
-
-    let mut biases = HashMap::new();
-    biases.insert(1, bias_v_layer_1);
-
-    let nn = SimpleNeuralNetwork {
-        sizes: vec![3, 2],
-        weights,
-        biases,
+    let check_options = CheckOptions {
+        gradient_checking: false,
+        cost_decreasing_check: true,
     };
 
-    let outputs = nn.feed_forward(&inputs);
+    println!("about to start training");
 
-    println!("outputs: {:?}", outputs);
+    let mut t_total = SimpleTimer::start_new("t_total");
+
+    nn.train_stochastic(&training_data, 50, 0.9, 100, Some(check_options));
+    println!("done training");
+
+    let t0 = test_data.get(0).unwrap();
+    let p_output_v = nn.feed_forward(&t0.input_v);
+    println!("p_output_v: {}", p_output_v);
+    println!("desired_output_v: {}", &t0.desired_output_v);
+
+    let t0_cost = nn.cost_single_tr_ex(t0);
+    println!("t0_cost: {}", t0_cost);
+
+    for i_test in 0..50 {
+        let t = test_data.get(i_test).unwrap();
+        let cost = nn.cost_single_tr_ex(t);
+        println!("cost of {}th: {}", i_test, cost);
+    }
+
+    // let sub_tr_set = &test_data[0..1000];
+    // println!("computing cost of a sub-set of the test data...");
+    let test_set_cost = nn.cost_training_set(&test_data);
+    println!("\ntest_set_cost: {}", test_set_cost);
+
+    t_total.stop();
+    println!("\nt_total: {}", t_total);
 }
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Borrow;
-
     use super::*;
+    use common::column_vector;
+    use common::linalg::RowsMatrixBuilder;
     use float_cmp::approx_eq;
     use time_test::time_test;
 
@@ -885,11 +1179,11 @@ mod tests {
 
         // manually compute the correct output to use in later assertion
         let z0 = weights_l1.mult_vector(&inputs).plus(&bias_v_l1);
-        let sz0 = sigmoid_vector(&z0);
+        let sz0 = sigmoid::activate_vector(&z0);
         println!("sz0: {:?}", sz0);
 
         let z1 = weights_l2.mult_vector(&sz0).plus(&bias_v_l2);
-        let sz1 = sigmoid_vector(&z1);
+        let sz1 = sigmoid::activate_vector(&z1);
         println!("sz1: {:?}", sz1);
 
         println!("\n now doing with feed_forward");
@@ -958,11 +1252,11 @@ mod tests {
 
         // manually compute the correct output to use in later assertion
         let z0 = weights_l1.mult_vector(&inputs).plus(&bias_v_l1);
-        let sz0 = sigmoid_vector(&z0);
+        let sz0 = sigmoid::activate_vector(&z0);
         println!("sz0: {:?}", sz0);
 
         let z1 = weights_l2.mult_vector(&sz0).plus(&bias_v_l2);
-        let sz1 = sigmoid_vector(&z1);
+        let sz1 = sigmoid::activate_vector(&z1);
         println!("sz1: {:?}", sz1);
 
         println!("\n now doing with feed_forward");
@@ -1355,6 +1649,28 @@ mod tests {
         assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
     }
 
+    // #[test]
+    // fn test_with_mnist() {
+    //     time_test!();
+
+    //     let (training_data, test_data) = mnist_data::get_mnist_data();
+    //     let mut nn = NeuralNetworkBuilder::new()
+    //         .with_input_layer(784)
+    //         .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+    //         .with_hidden_layer(100, BuilderWeightsAndBiasesConfig::RandomBasic)
+    //         .with_output_layer(10, BuilderWeightsAndBiasesConfig::RandomBasic)
+    //         .build();
+
+    //     let check_options = CheckOptions {
+    //         gradient_checking: false,
+    //         cost_decreasing_check: false,
+    //     };
+
+    //     // let n = training_data[0].input_v.num_elements();
+    //     // assert_eq!(n, 0);
+    //     nn.train(&training_data, 1, 0.9, Some(check_options));
+    // }
+
     #[test]
     fn test_get_weight_matrix_shape() {
         let nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
@@ -1511,9 +1827,10 @@ mod tests {
 
 #[cfg(test)]
 mod test_nn_builder {
-    use std::panic;
-
     use super::*;
+    use common::column_vector;
+    use common::linalg::RowsMatrixBuilder;
+    use std::panic;
 
     #[test]
     fn test_nn_builder_manual_wb_values() {

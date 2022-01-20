@@ -7,8 +7,11 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../common" }
+mnist-data = { path = "../mnist-data" }
+metrics = { path = "../metrics" }
 rand = "0.8.4"
 rand_distr = "0.4.2"
+rayon = "1.5.1"
 
 [dev-dependencies]
 float-cmp = "0.9.0"

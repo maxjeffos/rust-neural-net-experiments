@@ -8,4 +8,5 @@ members = [
   "test4-multivariable-regression",
   "test5-playing-with-matrix-ideas",
   "test6-nn",
+  "mnist-data",
 ]

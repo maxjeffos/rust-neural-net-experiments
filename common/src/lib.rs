@@ -6,9 +6,9 @@ pub mod linalg;
 pub mod old_matrix;
 pub mod point;
 pub mod scalar_valued_multivariable_point;
-pub mod sigmoid;
 use rand::distributions::Distribution;
 use rand_distr::Normal;
+pub mod activation_functions;
 
 use linalg::{ColumnVector, Matrix};
 
