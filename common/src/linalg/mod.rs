@@ -2,7 +2,7 @@ use rand::distributions::{Distribution, Standard, Uniform};
 use rand::Rng;
 use rand_distr::num_traits::Float;
 use rand_distr::Normal;
-// use rayon::prelude::*;
+use rayon::prelude::*;
 use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -151,6 +151,14 @@ impl Matrix {
         }
     }
 
+    pub fn new_zero_matrix_with_shape(shape: &MatrixShape) -> Self {
+        Self {
+            num_rows: shape.rows,
+            num_columns: shape.columns,
+            data: vec![0.0; shape.rows * shape.columns],
+        }
+    }
+
     pub fn new_matrix_with_random_values_from_normal_distribution(
         num_rows: usize,
         num_columns: usize,
@@ -165,6 +173,27 @@ impl Matrix {
         for m in 0..num_rows {
             for n in 0..num_columns {
                 let x = normal.sample(&mut rng);
+                matrix.set(m, n, x);
+            }
+        }
+
+        matrix
+    }
+
+    pub fn new_matrix_with_random_values_from_uniform_distribution(
+        num_rows: usize,
+        num_columns: usize,
+        min: f64,
+        max: f64,
+    ) -> Self {
+        let mut matrix = Self::new_zero_matrix(num_rows, num_columns);
+
+        let mut rng = rand::thread_rng();
+        let distribution = Uniform::new(min, max); // TODO: creates a uniform distribution over [min, max). Consider finding a way to make this a Uniform distribution over [min, max]
+
+        for m in 0..num_rows {
+            for n in 0..num_columns {
+                let x = distribution.sample(&mut rng);
                 matrix.set(m, n, x);
             }
         }
@@ -359,6 +388,50 @@ impl Matrix {
         self
     }
 
+    pub fn elementwise_divide_in_place(&mut self, other: &Self) {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
+            panic!("Matrix dimensions are not compatible for elementwise division. Both matricies must be the same dimensions.");
+        }
+
+        for i in 0..self.data.len() {
+            let val_in_self = self.data.get_mut(i).unwrap();
+            *val_in_self = *val_in_self / other.data[i];
+        }
+    }
+
+    pub fn elementwise_divide(&self, other: &Self) -> Self {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
+            panic!("Matrix dimensions are not compatible for elementwise division. Both matricies must be the same dimensions.");
+        }
+
+        let data = self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(x, y)| x / y)
+            .collect();
+
+        Self {
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
+            data,
+        }
+    }
+
+    pub fn add_scalar_to_each_element_in_place(&mut self, scalar: f64) {
+        for i in 0..self.data.len() {
+            let val_in_self = self.data.get_mut(i).unwrap();
+            *val_in_self = *val_in_self + scalar;
+        }
+    }
+
+    pub fn elementwise_square_root_in_place(&mut self) {
+        for i in 0..self.data.len() {
+            let val_in_self = self.data.get_mut(i).unwrap();
+            *val_in_self = (*val_in_self).sqrt();
+        }
+    }
+
     pub fn plus(&self, other: &Self) -> Self {
         if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
@@ -377,6 +450,42 @@ impl Matrix {
             num_rows: self.num_rows,
             num_columns: self.num_columns,
             data,
+        }
+    }
+
+    /// Experimental!
+    pub fn add_in_place_par(&mut self, other: &Self) {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
+            println!(
+                "self: {}x{} other: {}x{}",
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
+            );
+            panic!("Matrix dimensions are not compatible for addition. Both matricies must have the same dimensions.");
+        }
+
+        let self_data = &mut self.data;
+        let other_data = &other.data;
+
+        self_data
+            .par_iter_mut()
+            .zip(other_data.par_iter())
+            .for_each(|(self_x, other_x)| *self_x += *other_x);
+    }
+
+    /// Experimental!
+    /// Currently same as `add_in_place`
+    pub fn add_in_place_serial(&mut self, other: &Self) {
+        if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
+            println!(
+                "self: {}x{} other: {}x{}",
+                self.num_rows, self.num_columns, other.num_rows, other.num_columns
+            );
+            panic!("Matrix dimensions are not compatible for addition. Both matricies must have the same dimensions.");
+        }
+
+        for i in 0..self.data.len() {
+            let val_in_self = self.data.get_mut(i).unwrap();
+            *val_in_self = *val_in_self + other.data[i];
         }
     }
 
@@ -726,7 +835,7 @@ impl ColumnVector {
 
     pub fn hadamard_product_in_place(&mut self, other: &ColumnVector) {
         if self.num_elements() != other.num_elements() {
-            panic!("hadamard_product on column vectors requires that the two vectors have of the same length");
+            panic!("hadamard_product_in_place on column vectors requires that the two vectors have of the same length");
         }
 
         for i in 0..self.num_elements() {
@@ -737,6 +846,42 @@ impl ColumnVector {
     pub fn hadamard_product_chaining(mut self, other: &ColumnVector) -> Self {
         self.hadamard_product_in_place(other);
         self
+    }
+
+    pub fn elementwise_divide(&self, other: &ColumnVector) -> ColumnVector {
+        if self.num_elements() != other.num_elements() {
+            panic!("elementwise_divide on column vectors requires that the two vectors have of the same length");
+        }
+
+        let mut data = Vec::new();
+        for (x, y) in self.iter_with(other) {
+            data.push(x / y);
+        }
+        ColumnVector::from_vec(data)
+    }
+
+    pub fn add_scalar_to_each_element_in_place(&mut self, scalar: f64) {
+        self.inner_matrix
+            .data
+            .iter_mut()
+            .for_each(|x| *x += scalar);
+    }
+
+    pub fn elementwise_square_root_in_place(&mut self) {
+        self.inner_matrix
+            .data
+            .iter_mut()
+            .for_each(|x| *x = x.sqrt());
+    }
+
+    pub fn elementwise_divide_in_place(&mut self, other: &ColumnVector) {
+        if self.num_elements() != other.num_elements() {
+            panic!("elementwise_divide_in_place on column vectors requires that the two vectors have of the same length");
+        }
+
+        for i in 0..self.num_elements() {
+            self.set(i, self.get(i) / other.get(i));
+        }
     }
 
     pub fn vec_length(&self) -> f64 {
@@ -1291,6 +1436,56 @@ mod tests {
     }
 
     #[test]
+    fn add_in_place_par_works() {
+        let mut m1 = Matrix::empty_with_num_rows(3);
+        m1.push_column(&[1.0, 2.0, 3.0]);
+        m1.push_column(&[4.0, 5.0, 6.0]);
+
+        let mut m2 = Matrix::empty_with_num_rows(3);
+        m2.push_column(&[1.0, 2.0, 3.0]);
+        m2.push_column(&[4.0, 5.0, 6.0]);
+
+        m1.add_in_place_par(&m2);
+
+        assert_eq!(m1.num_rows, 3);
+        assert_eq!(m1.num_columns, 2);
+
+        assert_eq!(m1.get(0, 0), 2.0);
+        assert_eq!(m1.get(0, 1), 8.0);
+
+        assert_eq!(m1.get(1, 0), 4.0);
+        assert_eq!(m1.get(1, 1), 10.0);
+
+        assert_eq!(m1.get(2, 0), 6.0);
+        assert_eq!(m1.get(2, 1), 12.0);
+    }
+
+    #[test]
+    fn add_in_place_serial_works() {
+        let mut m1 = Matrix::empty_with_num_rows(3);
+        m1.push_column(&[1.0, 2.0, 3.0]);
+        m1.push_column(&[4.0, 5.0, 6.0]);
+
+        let mut m2 = Matrix::empty_with_num_rows(3);
+        m2.push_column(&[1.0, 2.0, 3.0]);
+        m2.push_column(&[4.0, 5.0, 6.0]);
+
+        m1.add_in_place_serial(&m2);
+
+        assert_eq!(m1.num_rows, 3);
+        assert_eq!(m1.num_columns, 2);
+
+        assert_eq!(m1.get(0, 0), 2.0);
+        assert_eq!(m1.get(0, 1), 8.0);
+
+        assert_eq!(m1.get(1, 0), 4.0);
+        assert_eq!(m1.get(1, 1), 10.0);
+
+        assert_eq!(m1.get(2, 0), 6.0);
+        assert_eq!(m1.get(2, 1), 12.0);
+    }
+
+    #[test]
     fn minus_works() {
         let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
         let mut m2 = column_vector_matrix![1.0, 2.0, 3.0];
@@ -1402,6 +1597,88 @@ mod tests {
         assert_eq!(res.get(1, 0), 16.0);
         assert_eq!(res.get(1, 1), 25.0);
         assert_eq!(res.get(1, 2), 36.0);
+    }
+
+    #[test]
+    fn test_elementwise_divide() {
+        let m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .build();
+
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[2.0, 2.0, 2.0])
+            .with_row(&[2.0, 2.0, 2.0])
+            .build();
+
+        let m_hadamard = m.elementwise_divide(&m2);
+        assert_eq!(m_hadamard.num_rows, 2);
+        assert_eq!(m_hadamard.num_columns, 3);
+        assert_eq!(m_hadamard.get(0, 0), 0.5);
+        assert_eq!(m_hadamard.get(0, 1), 1.0);
+        assert_eq!(m_hadamard.get(0, 2), 1.5);
+        assert_eq!(m_hadamard.get(1, 0), 2.0);
+        assert_eq!(m_hadamard.get(1, 1), 2.5);
+        assert_eq!(m_hadamard.get(1, 2), 3.0);
+    }
+
+    #[test]
+    fn test_elementwise_divide_product_in_place() {
+        let mut m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .build();
+
+        let m2 = RowsMatrixBuilder::new()
+            .with_row(&[2.0, 2.0, 2.0])
+            .with_row(&[2.0, 2.0, 2.0])
+            .build();
+
+        m.elementwise_divide_in_place(&m2);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
+        assert_eq!(m.get(0, 0), 0.5);
+        assert_eq!(m.get(0, 1), 1.0);
+        assert_eq!(m.get(0, 2), 1.5);
+        assert_eq!(m.get(1, 0), 2.0);
+        assert_eq!(m.get(1, 1), 2.5);
+        assert_eq!(m.get(1, 2), 3.0);
+    }
+
+    #[test]
+    pub fn test_add_scalar_to_each_element_in_place() {
+        let mut m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 2.0, 3.0])
+            .with_row(&[4.0, 5.0, 6.0])
+            .build();
+
+        m.add_scalar_to_each_element_in_place(0.5);
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
+        assert_eq!(m.get(0, 0), 1.5);
+        assert_eq!(m.get(0, 1), 2.5);
+        assert_eq!(m.get(0, 2), 3.5);
+        assert_eq!(m.get(1, 0), 4.5);
+        assert_eq!(m.get(1, 1), 5.5);
+        assert_eq!(m.get(1, 2), 6.5);
+    }
+
+    #[test]
+    pub fn test_elementwise_square_root_in_place() {
+        let mut m = RowsMatrixBuilder::new()
+            .with_row(&[1.0, 4.0, 9.0])
+            .with_row(&[16.0, 25.0, 36.0])
+            .build();
+
+        m.elementwise_square_root_in_place();
+        assert_eq!(m.num_rows, 2);
+        assert_eq!(m.num_columns, 3);
+        assert_eq!(m.get(0, 0), 1.0);
+        assert_eq!(m.get(0, 1), 2.0);
+        assert_eq!(m.get(0, 2), 3.0);
+        assert_eq!(m.get(1, 0), 4.0);
+        assert_eq!(m.get(1, 1), 5.0);
+        assert_eq!(m.get(1, 2), 6.0);
     }
 
     #[test]
@@ -1763,6 +2040,51 @@ mod column_vector_tests {
         assert_eq!(res.get(0), 1.0);
         assert_eq!(res.get(1), 4.0);
         assert_eq!(res.get(2), 9.0);
+    }
+
+    #[test]
+    fn elementwise_divide_works() {
+        let cv1 = ColumnVector::new(&[10.0, 20.0, 30.0]);
+        let cv2 = ColumnVector::new(&[5.0, 5.0, 5.0]);
+        let cv3 = cv1.elementwise_divide(&cv2);
+        assert_eq!(cv3.num_elements(), 3);
+        assert_eq!(cv3.get(0), 2.0);
+        assert_eq!(cv3.get(1), 4.0);
+        assert_eq!(cv3.get(2), 6.0);
+    }
+
+    #[test]
+    fn elementwise_divide_in_place_works() {
+        let mut cv1 = ColumnVector::new(&[10.0, 20.0, 30.0]);
+        let cv2 = ColumnVector::new(&[5.0, 5.0, 5.0]);
+        cv1.elementwise_divide_in_place(&cv2);
+        println!("{:?}", cv1);
+        assert_eq!(cv1.num_elements(), 3);
+        assert_eq!(cv1.get(0), 2.0);
+        assert_eq!(cv1.get(1), 4.0);
+        assert_eq!(cv1.get(2), 6.0);
+    }
+
+    #[test]
+    fn test_add_scalar_to_each_element_in_place() {
+        let mut cv1 = ColumnVector::new(&[1.0, 2.0, 3.0]);
+        cv1.add_scalar_to_each_element_in_place(0.5);
+        println!("{:?}", cv1);
+        assert_eq!(cv1.num_elements(), 3);
+        assert_eq!(cv1.get(0), 1.5);
+        assert_eq!(cv1.get(1), 2.5);
+        assert_eq!(cv1.get(2), 3.5);
+    }
+
+    #[test]
+    fn test_elementwise_square_root_in_place() {
+        let mut cv1 = ColumnVector::new(&[1.0, 4.0, 9.0]);
+        cv1.elementwise_square_root_in_place();
+        println!("{:?}", cv1);
+        assert_eq!(cv1.num_elements(), 3);
+        assert_eq!(cv1.get(0), 1.0);
+        assert_eq!(cv1.get(1), 2.0);
+        assert_eq!(cv1.get(2), 3.0);
     }
 
     #[test]

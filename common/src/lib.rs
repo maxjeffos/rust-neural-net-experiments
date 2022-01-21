@@ -8,7 +8,6 @@ pub mod point;
 pub mod scalar_valued_multivariable_point;
 use rand::distributions::Distribution;
 use rand_distr::Normal;
-pub mod activation_functions;
 
 use linalg::{ColumnVector, Matrix};
 
