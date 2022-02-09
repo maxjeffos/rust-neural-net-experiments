@@ -12,12 +12,14 @@ pub struct NeuralNetworkBuilder {
     output_layer_info: Option<OutputLayerConfig>,
 }
 
+#[derive(Debug, Clone)]
 pub struct HiddenLayerConfig {
     size: usize,
-    weights_and_biases: Initializer,
+    weights_and_biases: Initializer, // rename this field to initializer
     activation_function: ActivationFunction,
 }
 
+#[derive(Debug, Clone)]
 pub struct OutputLayerConfig {
     size: usize,
     weights_and_biases: Initializer,
@@ -144,7 +146,7 @@ impl NeuralNetworkBuilder {
         // first setup the sizes
         let mut sizes = Vec::new();
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new(None));
+        layer_infos.insert(0, LayerInfo::new_with_initializer(None, None));
 
         if let Some(input_layer_size) = self.input_layer_size {
             sizes.push(self.input_layer_size.unwrap());
@@ -169,6 +171,8 @@ impl NeuralNetworkBuilder {
         let mut l = 1; // input layer is l 0 and doesn't have weights/biases
 
         for h in self.hidden_layers_info {
+            let initializer_str = format!("{}", &h.weights_and_biases);
+
             match h.weights_and_biases {
                 Initializer::RandomBasic => {
                     let weights_m = Matrix::new_matrix_with_random_values_from_normal_distribution(
@@ -252,12 +256,17 @@ impl NeuralNetworkBuilder {
                     biases.insert(l, bias_v);
                 }
             }
-            layer_infos.insert(l, LayerInfo::new(Some(h.activation_function)));
+
+            layer_infos.insert(
+                l,
+                LayerInfo::new_with_initializer(Some(h.activation_function), Some(initializer_str)),
+            );
             l += 1;
         }
 
         // l is now the output layer
         let output_layer_info = self.output_layer_info.unwrap();
+        let initializer_str = format!("{}", &output_layer_info.weights_and_biases);
         match output_layer_info.weights_and_biases {
             Initializer::RandomBasic => {
                 let weights_m = Matrix::new_matrix_with_random_values_from_normal_distribution(
@@ -330,7 +339,10 @@ impl NeuralNetworkBuilder {
         }
         layer_infos.insert(
             l,
-            LayerInfo::new(Some(output_layer_info.activation_function)),
+            LayerInfo::new_with_initializer(
+                Some(output_layer_info.activation_function),
+                Some(initializer_str),
+            ),
         );
 
         SimpleNeuralNetwork {
