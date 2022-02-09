@@ -25,6 +25,9 @@ use initializer::Initializer;
 pub mod big_theta;
 use big_theta::BigTheta;
 
+pub mod training_log;
+use training_log::TrainingSessionLogger;
+
 type LayerIndex = usize;
 
 // pub enum Optimizer {
@@ -35,6 +38,7 @@ type LayerIndex = usize;
 //     Adam(f64, f64, f64, f64),
 // }
 
+#[derive(Debug)]
 pub enum Optimizer {
     StanardGradientDescent(StandardGradientDescentConfig),
     Momentum(MomentumConfig),
@@ -59,15 +63,18 @@ impl Optimizer {
     }
 }
 
+#[derive(Debug)]
 pub struct StandardGradientDescentConfig {
     pub learning_rate: f64,
 }
 
+#[derive(Debug)]
 pub struct MomentumConfig {
     pub learning_rate: f64,
     pub momentum: f64,
 }
 
+#[derive(Debug)]
 pub struct AdamConfig {
     pub learning_rate: f64,
     pub momentum_decay: f64, // beta_1 in HOML
@@ -143,12 +150,24 @@ struct LayerInfo {
     activation_function: Option<ActivationFunction>,
     // weights: Matrix,
     // biases: ColumnVector,
+    initializer: Option<String>,
 }
 
 impl LayerInfo {
     fn new(activation_function: Option<ActivationFunction>) -> Self {
         Self {
             activation_function,
+            initializer: None,
+        }
+    }
+
+    fn new_with_initializer(
+        activation_function: Option<ActivationFunction>,
+        initializer: Option<String>,
+    ) -> Self {
+        Self {
+            activation_function,
+            initializer,
         }
     }
 }
@@ -935,6 +954,7 @@ impl SimpleNeuralNetwork {
         check_options: Option<&CheckOptions>,
         early_stop_config: Option<EarlyStopConfig>,
         full_cost_update_every: Option<usize>, // After how every epocs do you want to do a full cost update across the entire training set, if at all.
+        session_logger: Option<TrainingSessionLogger>,
     ) {
         println!("computing initial cross accross entire training dataset...");
         let mut t_init_cost = SimpleTimer::start_new("t_init_cost");
@@ -942,6 +962,12 @@ impl SimpleNeuralNetwork {
         t_init_cost.stop();
         println!("initial cost across entire training set: {}", initial_cost);
         println!("t_init_cost: {}", t_init_cost);
+
+        if let Some(ref session_logger) = session_logger {
+            let network_config = training_log::NetworkConfig::from_neural_network(&self);
+            let optimizer_str = format!("{:?}", optimizer);
+            session_logger.write_training_session_file(initial_cost, network_config, optimizer_str);
+        }
 
         // here's what this does:
         // for epocs
@@ -951,7 +977,7 @@ impl SimpleNeuralNetwork {
         //     compute gradients for w and b
         //     update weights and biases
 
-        let mut epocs_count = 0;
+        let mut epochs_count = 0;
         let mut prev_cost = initial_cost;
 
         let default_check_options = CheckOptions::no_checks();
@@ -963,8 +989,8 @@ impl SimpleNeuralNetwork {
         let mut s = BigTheta::zero_from_sizes(&self.sizes); // used by Adam optimizer
 
         loop {
-            if epocs_count >= epocs {
-                println!("stopping after {} epocs", epocs_count);
+            if epochs_count >= epocs {
+                println!("stopping after {} epocs", epochs_count);
                 break;
             }
 
@@ -1010,7 +1036,7 @@ impl SimpleNeuralNetwork {
 
             println!(
                 "finished ff for all training points - epoch {}",
-                epocs_count
+                epochs_count
             );
 
             // note: compute_gradients takes data for ALL training examples
@@ -1021,7 +1047,7 @@ impl SimpleNeuralNetwork {
             t_compute_gradients.stop();
             println!(
                 "t_compute_gradients epoch {}: {}",
-                epocs_count, t_compute_gradients
+                epochs_count, t_compute_gradients
             );
 
             // if check_options.gradient_checking {
@@ -1166,11 +1192,11 @@ impl SimpleNeuralNetwork {
                     // let momentum_decay_t = 1.0 - adam_optimizer_config.momentum_decay.powf(1.0 / adam_optimizer_config.epochs);
                     let momentum_decay_t = adam_optimizer_config
                         .momentum_decay
-                        .powf(1.0 + epocs_count as f64);
+                        .powf(1.0 + epochs_count as f64);
 
                     let scaling_decay_t = adam_optimizer_config
                         .scaling_decay
-                        .powf(1.0 + epocs_count as f64);
+                        .powf(1.0 + epochs_count as f64);
 
                     // 3. create m_hat (temp value)
                     let mut m_hat = momentum.divide_scalar_return_new(1.0 - momentum_decay_t);
@@ -1240,45 +1266,72 @@ impl SimpleNeuralNetwork {
                 let cost = self.cost_training_set(&training_data);
                 println!(
                     "cost across training set after epoch {}: {}",
-                    epocs_count, cost
+                    epochs_count, cost
                 );
                 if cost > prev_cost {
                     panic!(
                         "cost across training set increased from {} to {} on epoc {}",
-                        prev_cost, cost, epocs_count
+                        prev_cost, cost, epochs_count
                     );
                 }
                 prev_cost = cost;
             }
 
-            epocs_count += 1;
+            epochs_count += 1;
 
-            // remove
+            let mut maybe_test_set_cost = None;
+
             if let Some(full_cost_update_every) = full_cost_update_every {
-                if epocs_count % full_cost_update_every == 0 {
+                if epochs_count % full_cost_update_every == 0 {
                     println!(
-                        "\ncomputing cross across entire training dataset after {} epocs...",
-                        epocs_count
+                        "\nCost Update\ncomputing cross across entire training dataset after {} epocs...",
+                        epochs_count
                     );
-                    let final_cost = self.cost_training_set(&training_data);
+                    let training_set_cost = self.cost_training_set(&training_data);
                     println!(
-                        "cost across entire training set after {} epocs: {}",
-                        epocs_count, final_cost,
+                        "  - cost across entire training set after {} epocs: {}",
+                        epochs_count, training_set_cost,
                     );
+
+                    println!(
+                        "computing cross across entire test dataset after {} epocs...",
+                        epochs_count
+                    );
+                    let test_set_cost = self.cost_training_set(&training_data);
+                    println!(
+                        "  - cost across test set after {} epocs: {}",
+                        epochs_count, training_set_cost,
+                    );
+                    maybe_test_set_cost = Some(training_set_cost);
+
+                    if let Some(ref session_logger) = session_logger {
+                        let epoch = epochs_count - 1;
+                        session_logger.write_update(
+                            epoch,
+                            epochs_count,
+                            training_set_cost,
+                            test_set_cost,
+                        );
+                    }
                 }
             }
 
             if let Some(ref esc) = early_stop_config {
-                // println!("{} % {} is {}", epocs_count, esc.check_every, epocs_count % esc.check_every);
-                if epocs_count % esc.check_every == 0 {
+                if epochs_count % esc.check_every == 0 {
                     println!("TRAINING SET COST CHECK / EARLY STOP");
-                    let c_test_data = self.cost_training_set(esc.test_data);
-                    println!(
-                        "test dataset cost after {} epocs: {}",
-                        epocs_count, c_test_data
-                    );
-                    if c_test_data <= esc.cost_threshold {
-                        println!("stopping after {} epocs", epocs_count);
+
+                    let cost = if let Some(test_set_cost) = maybe_test_set_cost {
+                        // the test cost was previously compute in this epoch in the above full cost update
+                        // so don't re-compute it
+                        test_set_cost
+                    } else {
+                        let test_set_cost = self.cost_training_set(esc.test_data);
+                        test_set_cost
+                    };
+
+                    println!("test dataset cost after {} epocs: {}", epochs_count, cost);
+                    if cost <= esc.cost_threshold {
+                        println!("stopping after {} epocs", epochs_count);
                         break;
                     }
                 }
@@ -1289,7 +1342,7 @@ impl SimpleNeuralNetwork {
         let final_cost = self.cost_training_set(&training_data);
         println!(
             "\ncost across entire training set after {} epocs: {}",
-            epocs_count, final_cost,
+            epochs_count, final_cost,
         );
     }
 }
@@ -1301,6 +1354,8 @@ pub struct EarlyStopConfig<'a> {
 }
 
 fn main() {
+    println!("experimenting with training log stuff");
+
     let (training_data, test_data) = mnist_data::get_mnist_data(50000, 10000);
     println!("got the MNIST training data");
 
@@ -1360,8 +1415,23 @@ fn main() {
         // test_data: &test_data,
         test_data: &test_data[0..10000],
         cost_threshold: 0.001,
-        check_every: 5,
+        check_every: 10,
     };
+
+    // TODO: should probably replace the ::new() + create_training_log_directory() thing with
+    // an init() constructor that does both
+    let mut session_logger = TrainingSessionLogger::new();
+    session_logger
+        .create_training_log_directory()
+        .expect("failed creating traininig log directory");
+    println!(
+        "training session id: {:?}",
+        &session_logger.training_session_id
+    );
+    println!(
+        "created training log directory: {:?}",
+        &session_logger.full_session_output_directory
+    );
 
     nn.train_stochastic(
         &training_data,
@@ -1373,7 +1443,8 @@ fn main() {
         5000,
         Some(&check_options),
         Some(early_stop_config),
-        Some(5),
+        Some(10),
+        Some(session_logger),
     );
     println!("done training");
 
@@ -2088,6 +2159,7 @@ mod tests {
             Some(&check_options),
             None,
             None,
+            None,
         );
 
         let final_weights = nn.weights.get(&1).unwrap();
@@ -2178,6 +2250,7 @@ mod tests {
             Some(&check_options),
             None,
             None,
+            None,
         );
 
         let final_weights = nn.weights.get(&1).unwrap();
@@ -2264,6 +2337,7 @@ mod tests {
             Some(&check_options),
             None,
             None,
+            None,
         );
 
         let final_weights = nn.weights.get(&1).unwrap();
@@ -2332,7 +2406,7 @@ mod tests {
             println!("{}", b);
         });
 
-        let epocs = 2500;
+        let epocs = 1000;
         let learning_rate = 0.9;
 
         let check_options = CheckOptions {
@@ -2366,8 +2440,8 @@ mod tests {
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
         assert!(approx_eq!(f64, predicted_output_1, ORANGE, epsilon = 0.025));
 
-        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.0001));
-        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.0001));
+        assert!(approx_eq!(f64, cost_of_predicted_0, 0.0, epsilon = 0.001));
+        assert!(approx_eq!(f64, cost_of_predicted_1, 0.0, epsilon = 0.001));
     }
 
     #[test]
@@ -2431,6 +2505,7 @@ mod tests {
             mini_batch_size,
             Some(&check_options),
             Some(early_stop_config),
+            None,
             None,
         );
 
@@ -2533,6 +2608,7 @@ mod tests {
             mini_batch_size,
             Some(&check_options),
             Some(early_stop_config),
+            None,
             None,
         );
 
@@ -2637,6 +2713,7 @@ mod tests {
             mini_batch_size,
             Some(&check_options),
             Some(early_stop_config),
+            None,
             None,
         );
 

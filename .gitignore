@@ -1,2 +1,4 @@
 **/target
 .DS_Store
+test6-nn/training-sessions
+mnist-data/data

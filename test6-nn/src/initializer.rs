@@ -2,6 +2,7 @@ use crate::LayerIndex;
 use common::column_vec_of_random_values_from_distribution;
 use common::linalg::{ColumnVector, Matrix};
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum Initializer {
     RandomBasic,
     Xavier,
@@ -10,6 +11,19 @@ pub enum Initializer {
     HeForReLUAndVariants,
     // Random(f64, f64),
     Manual(Matrix, ColumnVector),
+}
+
+impl std::fmt::Display for Initializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Initializer::RandomBasic => write!(f, "RandomBasic"),
+            Initializer::Xavier => write!(f, "Xavier"),
+            Initializer::XavierNormalized => write!(f, "XavierNormalized"),
+            Initializer::XavierNormalHOMLForSigmoid => write!(f, "XavierNormalHOMLForSigmoid"),
+            Initializer::HeForReLUAndVariants => write!(f, "HeForReLUAndVariants"),
+            Initializer::Manual(..) => write!(f, "Manual"),
+        }
+    }
 }
 
 pub fn get_init_weights_and_biases(
