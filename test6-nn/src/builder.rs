@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::activation::ActivationFunction;
 use crate::initializer::get_init_weights_and_biases;
-use crate::{Initializer, LayerInfo, SimpleNeuralNetwork};
+use crate::layer_info::LayerInfo;
+use crate::{Initializer, SimpleNeuralNetwork};
 use common::column_vec_of_random_values_from_distribution;
 use common::linalg::{ColumnVector, Matrix};
 

@@ -51,11 +51,11 @@ impl BigTheta {
 
     pub fn mult_scalar_in_place(&mut self, scalar: f64) {
         for (_, w) in self.weights_matricies.iter_mut() {
-            w.multiply_by_scalar_in_place(scalar);
+            w.mult_scalar_mut(scalar);
         }
 
         for (_, b) in self.bias_vectors.iter_mut() {
-            b.multiply_by_scalar_in_place(scalar);
+            b.mult_scalar_mut(scalar);
         }
     }
 
@@ -67,11 +67,11 @@ impl BigTheta {
 
     pub fn divide_scalar_in_place(&mut self, scalar: f64) {
         for (_, w) in self.weights_matricies.iter_mut() {
-            w.divide_by_scalar_in_place(scalar);
+            w.div_scalar_mut(scalar);
         }
 
         for (_, b) in self.bias_vectors.iter_mut() {
-            b.divide_by_scalar_in_place(scalar);
+            b.div_scalar_mut(scalar);
         }
     }
 
@@ -84,24 +84,24 @@ impl BigTheta {
     pub fn subtract_in_place(&mut self, other: &Self) {
         for (layer_index, w) in self.weights_matricies.iter_mut() {
             let other_w = other.weights_matricies.get(layer_index).unwrap();
-            w.subtract_in_place(other_w);
+            w.subtract_mut(other_w);
         }
 
         for (layer_index, b) in self.bias_vectors.iter_mut() {
             let other_b = other.bias_vectors.get(layer_index).unwrap();
-            b.minus_in_place(other_b);
+            b.subtract_mut(other_b);
         }
     }
 
     pub fn add_in_place(&mut self, other: &Self) {
         for (layer_index, w) in self.weights_matricies.iter_mut() {
             let other_w = other.weights_matricies.get(layer_index).unwrap();
-            w.add_in_place(other_w);
+            w.add_mut(other_w);
         }
 
         for (layer_index, b) in self.bias_vectors.iter_mut() {
             let other_b = other.bias_vectors.get(layer_index).unwrap();
-            b.plus_in_place(other_b);
+            b.add_mut(other_b);
         }
     }
 

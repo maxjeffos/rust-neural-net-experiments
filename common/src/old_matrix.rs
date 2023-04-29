@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_divide_by_scalar() {
+    pub fn test_div_scalar() {
         let m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])

@@ -286,13 +286,13 @@ impl Matrix {
         }
     }
 
-    pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
+    pub fn mult_scalar_mut(&mut self, scalar: f64) {
         self.data
             .iter_mut()
             .for_each(|x| *x *= scalar);
     }
 
-    pub fn divide_by_scalar(&self, scalar: f64) -> Self {
+    pub fn div_scalar(&self, scalar: f64) -> Self {
         Self {
             num_rows: self.num_rows,
             num_columns: self.num_columns,
@@ -304,7 +304,7 @@ impl Matrix {
         }
     }
 
-    pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
+    pub fn div_scalar_mut(&mut self, scalar: f64) {
         self.data
             .iter_mut()
             .for_each(|x| *x /= scalar);
@@ -490,7 +490,7 @@ impl Matrix {
     }
 
     /// Add another matrix to self, updating self
-    pub fn add_in_place(&mut self, other: &Self) {
+    pub fn add_mut(&mut self, other: &Self) {
         if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
@@ -506,7 +506,7 @@ impl Matrix {
     }
 
     /// Create a new Matrix which is self minus other
-    pub fn minus(&self, other: &Self) -> Self {
+    pub fn subtract(&self, other: &Self) -> Self {
         if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
@@ -528,7 +528,7 @@ impl Matrix {
     }
 
     /// Subtract another matrix from self, updating self.
-    pub fn subtract_in_place(&mut self, other: &Self) {
+    pub fn subtract_mut(&mut self, other: &Self) {
         if self.num_rows != other.num_rows || self.num_columns != other.num_columns {
             println!(
                 "self: {}x{} other: {}x{}",
@@ -730,7 +730,7 @@ impl ColumnVector {
         ColumnVector::from_vec(data)
     }
 
-    pub fn plus_in_place(&mut self, other: &ColumnVector) {
+    pub fn add_mut(&mut self, other: &ColumnVector) {
         if self.num_elements() != other.num_elements() {
             panic!("self and other must have the same length");
         }
@@ -752,7 +752,7 @@ impl ColumnVector {
         self
     }
 
-    pub fn minus(&self, other: &ColumnVector) -> ColumnVector {
+    pub fn subtract(&self, other: &ColumnVector) -> ColumnVector {
         let mut data = Vec::new();
         for i in 0..self.num_elements() {
             data.push(self.get(i) - other.get(i));
@@ -760,7 +760,7 @@ impl ColumnVector {
         ColumnVector::from_vec(data)
     }
 
-    pub fn minus_in_place(&mut self, other: &ColumnVector) {
+    pub fn subtract_mut(&mut self, other: &ColumnVector) {
         for i in 0..self.num_elements() {
             self.set(i, self.get(i) - other.get(i));
         }
@@ -776,14 +776,14 @@ impl ColumnVector {
         ColumnVector::from_vec(data)
     }
 
-    pub fn multiply_by_scalar_in_place(&mut self, scalar: f64) {
+    pub fn mult_scalar_mut(&mut self, scalar: f64) {
         self.inner_matrix
             .data
             .iter_mut()
             .for_each(|x| *x *= scalar);
     }
 
-    pub fn divide_by_scalar(&self, scalar: f64) -> ColumnVector {
+    pub fn div_scalar(&self, scalar: f64) -> ColumnVector {
         let data = self
             .inner_matrix
             .data
@@ -794,7 +794,7 @@ impl ColumnVector {
         ColumnVector::from_vec(data)
     }
 
-    pub fn divide_by_scalar_in_place(&mut self, scalar: f64) {
+    pub fn div_scalar_mut(&mut self, scalar: f64) {
         self.inner_matrix
             .data
             .iter_mut()
@@ -802,7 +802,7 @@ impl ColumnVector {
     }
 
     pub fn mult_matrix(&self, other: &Matrix) -> Matrix {
-        // TODO: re-implement without cloning
+        // TODO(perf): re-implement without cloning
         let self_clone = self.clone();
         let m: Matrix = self_clone.into();
         let res = m.multiply(&other);
@@ -1411,7 +1411,7 @@ mod tests {
     }
 
     #[test]
-    fn add_in_place_works() {
+    fn add_mut_works() {
         let mut m1 = Matrix::empty_with_num_rows(3);
         m1.push_column(&[1.0, 2.0, 3.0]);
         m1.push_column(&[4.0, 5.0, 6.0]);
@@ -1420,7 +1420,7 @@ mod tests {
         m2.push_column(&[1.0, 2.0, 3.0]);
         m2.push_column(&[4.0, 5.0, 6.0]);
 
-        m1.add_in_place(&m2);
+        m1.add_mut(&m2);
 
         assert_eq!(m1.num_rows, 3);
         assert_eq!(m1.num_columns, 2);
@@ -1486,11 +1486,11 @@ mod tests {
     }
 
     #[test]
-    fn minus_works() {
+    fn subtract() {
         let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
         let mut m2 = column_vector_matrix![1.0, 2.0, 3.0];
 
-        let m = m1.minus(&m2);
+        let m = m1.subtract(&m2);
 
         assert_eq!(m.num_rows, 3);
         assert_eq!(m.num_columns, 1);
@@ -1500,11 +1500,11 @@ mod tests {
     }
 
     #[test]
-    fn subtract_works() {
+    fn test_subtract_mut() {
         let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
         let m2 = column_vector_matrix![1.0, 2.0, 3.0];
 
-        m1.subtract_in_place(&m2);
+        m1.subtract_mut(&m2);
 
         assert_eq!(m1.num_rows, 3);
         assert_eq!(m1.num_columns, 1);
@@ -1767,13 +1767,13 @@ mod tests {
     }
 
     #[test]
-    pub fn test_multiply_by_scalar_in_place() {
+    pub fn test_mult_scalar_mut() {
         let mut m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        m.multiply_by_scalar_in_place(2.0);
+        m.mult_scalar_mut(2.0);
         assert_eq!(m.num_rows, 2);
         assert_eq!(m.num_columns, 3);
 
@@ -1787,13 +1787,13 @@ mod tests {
     }
 
     #[test]
-    pub fn test_divide_by_scalar() {
+    pub fn test_div_scalar() {
         let m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        let m2 = m.divide_by_scalar(2.0);
+        let m2 = m.div_scalar(2.0);
         assert_eq!(m2.num_rows, 2);
         assert_eq!(m2.num_columns, 3);
 
@@ -1807,13 +1807,13 @@ mod tests {
     }
 
     #[test]
-    pub fn test_divide_by_scalar_in_place() {
+    pub fn test_div_scalar_mut() {
         let mut m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        m.divide_by_scalar_in_place(2.0);
+        m.div_scalar_mut(2.0);
         assert_eq!(m.num_rows, 2);
         assert_eq!(m.num_columns, 3);
 
@@ -1897,10 +1897,10 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn plus_in_place_works() {
+    fn add_mut_works() {
         let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
         let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
-        cv.plus_in_place(&cv2);
+        cv.add_mut(&cv2);
         assert_eq!(cv.num_elements(), 3);
         assert_eq!(cv.get(0), 5.0);
         assert_eq!(cv.get(1), 7.0);
@@ -1919,10 +1919,10 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn minus_works() {
+    fn subtract_works() {
         let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
         let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
-        let cv3 = cv.minus(&cv2);
+        let cv3 = cv.subtract(&cv2);
         assert_eq!(cv2.num_elements(), 3);
         assert_eq!(cv3.get(0), -3.0);
         assert_eq!(cv3.get(1), -3.0);
@@ -1933,7 +1933,7 @@ mod column_vector_tests {
     fn minus_in_place_works() {
         let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
         let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
-        cv.minus_in_place(&cv2);
+        cv.subtract_mut(&cv2);
         assert_eq!(cv2.num_elements(), 3);
         assert_eq!(cv.get(0), -3.0);
         assert_eq!(cv.get(1), -3.0);
@@ -1951,9 +1951,9 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn multiply_by_scalar_in_place_works() {
+    fn test_mult_scalar_mut() {
         let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
-        cv.multiply_by_scalar_in_place(2.0);
+        cv.mult_scalar_mut(2.0);
         assert_eq!(cv.num_elements(), 3);
         assert_eq!(cv.get(0), 2.0);
         assert_eq!(cv.get(1), 4.0);
@@ -1961,9 +1961,9 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn divide_by_scalar_works() {
+    fn div_scalar_works() {
         let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
-        let cv2 = cv.divide_by_scalar(2.0);
+        let cv2 = cv.div_scalar(2.0);
         assert_eq!(cv2.num_elements(), 3);
         assert_eq!(cv2.get(0), 0.5);
         assert_eq!(cv2.get(1), 1.0);
@@ -1971,9 +1971,9 @@ mod column_vector_tests {
     }
 
     #[test]
-    fn divide_by_scalar_in_place_works() {
+    fn div_scalar_mut_works() {
         let mut cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
-        cv.divide_by_scalar_in_place(2.0);
+        cv.div_scalar_mut(2.0);
         assert_eq!(cv.num_elements(), 3);
         assert_eq!(cv.get(0), 0.5);
         assert_eq!(cv.get(1), 1.0);
