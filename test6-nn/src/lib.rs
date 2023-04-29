@@ -200,7 +200,7 @@ const GRADIENT_CHECK_EPSILON_SQUARED: f64 = GRADIENT_CHECK_EPSILON * GRADIENT_CH
 
 /// z computes the z vector, i.e. the weighted sum of the inputs and the bias.
 fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> ColumnVector {
-    weight_matrix.mult_vector(input_v).add(bias_v)
+    weight_matrix.mult_vector(input_v).add_chaining(bias_v)
 }
 
 pub struct SimpleNeuralNetwork {

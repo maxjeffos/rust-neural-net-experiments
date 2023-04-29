@@ -741,7 +741,7 @@ impl ColumnVector {
     }
 
     /// Variant of addition for use in chaining
-    pub fn add(mut self, other: &ColumnVector) -> ColumnVector {
+    pub fn add_chaining(mut self, other: &ColumnVector) -> ColumnVector {
         if self.num_elements() != other.num_elements() {
             panic!("self and other must have the same length");
         }
@@ -1911,7 +1911,7 @@ mod column_vector_tests {
     fn add_works() {
         let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
         let cv2 = ColumnVector::new(&[4.0, 5.0, 6.0]);
-        let res = cv.add(&cv2);
+        let res = cv.add_chaining(&cv2);
         assert_eq!(res.num_elements(), 3);
         assert_eq!(res.get(0), 5.0);
         assert_eq!(res.get(1), 7.0);
