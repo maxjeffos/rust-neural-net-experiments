@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::activation::ActivationFunction;
 use crate::initializer::get_init_weights_and_biases;
-use crate::layer_info::LayerInfo;
+use crate::layer_config::LayerConfig;
 use crate::{Initializer, SimpleNeuralNetwork};
 use common::column_vec_of_random_values_from_distribution;
 use common::linalg::{ColumnVector, Matrix};
@@ -147,7 +147,7 @@ impl NeuralNetworkBuilder {
         // first setup the sizes
         let mut sizes = Vec::new();
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new_with_initializer(None, None));
+        layer_infos.insert(0, LayerConfig::new_with_initializer(None, None));
 
         if let Some(input_layer_size) = self.input_layer_size {
             sizes.push(self.input_layer_size.unwrap());
@@ -260,7 +260,10 @@ impl NeuralNetworkBuilder {
 
             layer_infos.insert(
                 l,
-                LayerInfo::new_with_initializer(Some(h.activation_function), Some(initializer_str)),
+                LayerConfig::new_with_initializer(
+                    Some(h.activation_function),
+                    Some(initializer_str),
+                ),
             );
             l += 1;
         }
@@ -340,7 +343,7 @@ impl NeuralNetworkBuilder {
         }
         layer_infos.insert(
             l,
-            LayerInfo::new_with_initializer(
+            LayerConfig::new_with_initializer(
                 Some(output_layer_info.activation_function),
                 Some(initializer_str),
             ),

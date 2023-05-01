@@ -1,7 +1,7 @@
 use crate::activation::ActivationFunction;
 
 #[derive(Debug, Clone)]
-pub struct LayerInfo {
+pub struct LayerConfig {
     // Optional because the input layer doesn't have an activation function
     pub activation_function: Option<ActivationFunction>,
     // weights: Matrix,
@@ -9,7 +9,7 @@ pub struct LayerInfo {
     pub initializer: Option<String>,
 }
 
-impl LayerInfo {
+impl LayerConfig {
     pub fn new(activation_function: Option<ActivationFunction>) -> Self {
         Self {
             activation_function,

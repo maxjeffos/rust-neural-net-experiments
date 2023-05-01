@@ -25,8 +25,8 @@ use big_theta::BigTheta;
 pub mod training_log;
 use training_log::TrainingSessionLogger;
 
-pub mod layer_info;
-use layer_info::LayerInfo;
+pub mod layer_config;
+use layer_config::LayerConfig;
 
 type LayerIndex = usize;
 
@@ -217,7 +217,7 @@ pub struct SimpleNeuralNetwork {
     // The dimension of each ColumnVector will be [# number neurons in the layer]
     biases: HashMap<LayerIndex, ColumnVector>,
 
-    layer_infos: HashMap<LayerIndex, LayerInfo>,
+    layer_infos: HashMap<LayerIndex, LayerConfig>,
 }
 
 impl SimpleNeuralNetwork {
@@ -240,9 +240,9 @@ impl SimpleNeuralNetwork {
         }
 
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new(None));
+        layer_infos.insert(0, LayerConfig::new(None));
         for l in 1..sizes.len() {
-            layer_infos.insert(l, LayerInfo::new(Some(ActivationFunction::Sigmoid)));
+            layer_infos.insert(l, LayerConfig::new(Some(ActivationFunction::Sigmoid)));
         }
 
         Self {
@@ -312,6 +312,7 @@ impl SimpleNeuralNetwork {
         self.sizes[l] * self.sizes[l + 1]
     }
 
+    // TODO: use new methods here for getting layer weights / biases and return Result<ColumVector, NeuralNetworkError>
     pub fn feed_forward(&self, input_activations: &ColumnVector) -> ColumnVector {
         let mut activation_v = input_activations.clone();
 
@@ -1490,9 +1491,9 @@ mod tests {
         biases.insert(2, biases_l2);
 
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new(None));
-        layer_infos.insert(1, LayerInfo::new(Some(ActivationFunction::Sigmoid)));
-        layer_infos.insert(2, LayerInfo::new(Some(ActivationFunction::Sigmoid)));
+        layer_infos.insert(0, LayerConfig::new(None));
+        layer_infos.insert(1, LayerConfig::new(Some(ActivationFunction::Sigmoid)));
+        layer_infos.insert(2, LayerConfig::new(Some(ActivationFunction::Sigmoid)));
 
         let nn = SimpleNeuralNetwork {
             sizes: vec![
@@ -1679,9 +1680,9 @@ mod tests {
         ];
 
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new(None));
+        layer_infos.insert(0, LayerConfig::new(None));
         for l in 1..sizes.len() {
-            layer_infos.insert(l, LayerInfo::new(Some(ActivationFunction::Sigmoid)));
+            layer_infos.insert(l, LayerConfig::new(Some(ActivationFunction::Sigmoid)));
         }
 
         let nn = SimpleNeuralNetwork {
@@ -1761,9 +1762,9 @@ mod tests {
         ];
 
         let mut layer_infos = HashMap::new();
-        layer_infos.insert(0, LayerInfo::new(None));
+        layer_infos.insert(0, LayerConfig::new(None));
         for l in 1..sizes.len() {
-            layer_infos.insert(l, LayerInfo::new(Some(ActivationFunction::Sigmoid)));
+            layer_infos.insert(l, LayerConfig::new(Some(ActivationFunction::Sigmoid)));
         }
 
         let nn = SimpleNeuralNetwork {
