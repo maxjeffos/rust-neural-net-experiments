@@ -34,6 +34,9 @@ use common::linalg::{
     euclidian_distance, euclidian_length, square, ColumnVector, Matrix, MatrixShape,
 };
 
+mod errors;
+use errors::{InvalidLayerIndex, NeuralNetworkError};
+
 // Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
 // Neilson does the divide by 2
 // I'm doing the divide by 2
@@ -263,6 +266,30 @@ impl SimpleNeuralNetwork {
             panic!("not valid for input layer (because it has no weights/biases");
         }
         MatrixShape::new(self.sizes[layer_index], self.sizes[layer_index - 1])
+    }
+
+    // TODO(dedupe): this also exists in BigTheta. Should I just use a BigTheta in SimpleNeuralNetwork?
+    fn weights_at_layer_mut(
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut Matrix, NeuralNetworkError> {
+        self.weights
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::InvalidLayerIndex(InvalidLayerIndex(
+                layer_index,
+            )))
+    }
+
+    // TODO(dedupe): this also exists in BigTheta. Should I just use a BigTheta in SimpleNeuralNetwork?
+    fn bias_at_layer_mut(
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut ColumnVector, NeuralNetworkError> {
+        self.biases
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::InvalidLayerIndex(InvalidLayerIndex(
+                layer_index,
+            )))
     }
 
     // THIS MAY NOT BE RIGHT!
@@ -575,9 +602,11 @@ impl SimpleNeuralNetwork {
         &mut self,
         // A slice of `ForwardAndBackPassData` instances, one for each training example
         forward_and_back_pass_data_for_all_training_examples: &[ForwardAndBackPassData],
-    ) -> HashMap<LayerIndex, LayerGradients> {
-        let mut gradients = HashMap::new();
+    ) -> BigTheta {
         let num_training_examples = forward_and_back_pass_data_for_all_training_examples.len();
+
+        let mut bt_weights = HashMap::new();
+        let mut bt_biases = HashMap::new();
 
         // Iterate through the layers in reverse order (from output to input), skipping the input (0th) layer
         for l in (1..self.num_layers()).rev() {
@@ -613,17 +642,15 @@ impl SimpleNeuralNetwork {
             avg_weight_gradients.div_scalar_mut(num_training_examples as f64);
             avg_bias_gradients.div_scalar_mut(num_training_examples as f64);
 
-            // Insert the calculated gradients for the current layer into the LayerGradients HashMap
-            gradients.insert(
-                l,
-                LayerGradients {
-                    weight_gradients: avg_weight_gradients,
-                    bias_gradients: avg_bias_gradients,
-                },
-            );
+            bt_weights.insert(l, avg_weight_gradients);
+            bt_biases.insert(l, avg_bias_gradients);
         }
 
-        gradients
+        BigTheta {
+            sizes: self.sizes.clone(),
+            weights_matricies: bt_weights,
+            bias_vectors: bt_biases,
+        }
     }
 
     fn compute_gradients_par(
@@ -898,7 +925,7 @@ impl SimpleNeuralNetwork {
         epocs: usize,
         learning_rate: f64,
         check_options: Option<&CheckOptions>,
-    ) {
+    ) -> Result<(), NeuralNetworkError> {
         let initial_cost = self.cost_training_set(&training_data);
         println!("initial cost across entire training set: {}", initial_cost);
 
@@ -954,7 +981,7 @@ impl SimpleNeuralNetwork {
             if check_options.gradient_checking {
                 let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
                 // unroll the actual gradients
-                let d_vec = self.unroll_gradients(&gradients);
+                let d_vec = gradients.unroll();
 
                 let ed = euclidian_distance(&approx_gradients_big_v, &d_vec);
                 println!("ed: {}", ed);
@@ -971,28 +998,17 @@ impl SimpleNeuralNetwork {
                 // }
             }
 
-            // re-write of the above to use LayerGradients
-            // update the weights and biases
-            // TODO: extract to method for easy testing
-            gradients
-                .iter_mut()
-                .for_each(|(layer_index, layer_gradients)| {
-                    // Multiply the weight and bias gradients by the learning rate
-                    layer_gradients
-                        .weight_gradients
-                        .mult_scalar_mut(learning_rate);
-                    layer_gradients
-                        .bias_gradients
-                        .mult_scalar_mut(learning_rate);
+            // update weights and biases based on gradients and learning rate
+            // TODO: extract to method for easy testing?
+            for layer_index in 1..self.sizes.len() {
+                let weights_grad = gradients.weights_at_layer_mut(layer_index)?;
+                self.weights_at_layer_mut(layer_index)?
+                    .subtract_mut(weights_grad.mult_scalar_mut_chain(learning_rate));
 
-                    // Get mutable references to the network weights and biases for this layer
-                    let weights = self.weights.get_mut(layer_index).unwrap();
-                    let biases = self.biases.get_mut(layer_index).unwrap();
-
-                    // Update the weights and biases by subtracting the learning rate adjusted gradients
-                    weights.subtract_mut(&layer_gradients.weight_gradients);
-                    biases.subtract_mut(&layer_gradients.bias_gradients);
-                });
+                let bias_grad = gradients.bias_at_layer_mut(layer_index)?;
+                self.bias_at_layer_mut(layer_index)?
+                    .subtract_mut(bias_grad.mult_scalar_mut_chain(learning_rate));
+            }
 
             // Remove
             // Show weights and biases in l1
@@ -1022,6 +1038,8 @@ impl SimpleNeuralNetwork {
             "\ncost across entire training set after {} epocs: {}",
             epocs_count, final_cost,
         );
+
+        Ok(())
     }
 
     pub fn train_stochastic(

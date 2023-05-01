@@ -274,7 +274,7 @@ impl Matrix {
         }
     }
 
-    pub fn multiply_by_scalar(&self, scalar: f64) -> Self {
+    pub fn mult_scalar(&self, scalar: f64) -> Self {
         Self {
             num_rows: self.num_rows,
             num_columns: self.num_columns,
@@ -290,6 +290,13 @@ impl Matrix {
         self.data
             .iter_mut()
             .for_each(|x| *x *= scalar);
+    }
+
+    pub fn mult_scalar_mut_chain(&mut self, scalar: f64) -> &mut Self {
+        self.data
+            .iter_mut()
+            .for_each(|x| *x *= scalar);
+        self
     }
 
     pub fn div_scalar(&self, scalar: f64) -> Self {
@@ -781,6 +788,14 @@ impl ColumnVector {
             .data
             .iter_mut()
             .for_each(|x| *x *= scalar);
+    }
+
+    pub fn mult_scalar_mut_chain(&mut self, scalar: f64) -> &mut Self {
+        self.inner_matrix
+            .data
+            .iter_mut()
+            .for_each(|x| *x *= scalar);
+        self
     }
 
     pub fn div_scalar(&self, scalar: f64) -> ColumnVector {
@@ -1753,7 +1768,7 @@ mod tests {
             .with_row(&[4.0, 5.0, 6.0])
             .build();
 
-        let m2 = m.multiply_by_scalar(2.0);
+        let m2 = m.mult_scalar(2.0);
         assert_eq!(m2.num_rows, 2);
         assert_eq!(m2.num_columns, 3);
 

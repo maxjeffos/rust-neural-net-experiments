@@ -1,6 +1,7 @@
 use common::linalg::{ColumnVector, Matrix, MatrixShape};
 use std::collections::HashMap;
 
+use crate::errors::{IndexOutOfBoundsError, InvalidLayerIndex, NeuralNetworkError};
 use crate::LayerIndex;
 
 // derive PartialEq
@@ -31,6 +32,68 @@ impl BigTheta {
             weights_matricies,
             bias_vectors,
         }
+    }
+
+    /// Returns a `Vec<f64>` containing the unrolled weights and biases of the neural network.
+    ///
+    /// The unrolled vector is constructed by concatenating the weights and biases of each layer
+    /// in the network, starting from layer 1. At each layer, the weights of a layer are included before its biases.
+    ///
+    pub fn unroll(&self) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.sizes.len() {
+            let w = self.get_weights_matrix(&l);
+            let b = self.get_bias_vector(&l);
+
+            unrolled_vec.extend(w.data.as_slice());
+            unrolled_vec.extend(b.get_data_as_slice());
+        }
+        unrolled_vec
+    }
+
+    /// Returns a mutable reference to the `Matrix` representing the weights for the specified layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `layer_index` - A `LayerIndex` representing the index of the layer whose weights you want to access.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `NeuralNetworkError::InvalidLayerIndex` if the given `layer_index` is not valid - i.e. either than layer
+    /// doesn't exist, or it doesn't have an associated weights matrix.
+    ///
+    pub fn weights_at_layer_mut(
+        // TODO(dedupe): note that there's get_weights_matrix_mut below which is the same except that it uses unwrap
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut Matrix, NeuralNetworkError> {
+        self.weights_matricies
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::InvalidLayerIndex(InvalidLayerIndex(
+                layer_index,
+            )))
+    }
+
+    /// Returns a mutable reference to the `ColumnVector` representing the biases for the specified layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `layer_index` - A `LayerIndex` representing the index of the layer whose biases you want to access.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `NeuralNetworkError::InvalidLayerIndex` if the given `layer_index` is not valid - i.e. either than layer
+    /// doesn't exist, or it doesn't have an associated bias vector.
+    ///
+    pub fn bias_at_layer_mut(
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut ColumnVector, NeuralNetworkError> {
+        self.bias_vectors
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::IndexOutOfBoundsError(
+                IndexOutOfBoundsError(layer_index),
+            ))
     }
 
     pub fn get_weights_matrix(&self, layer_index: &LayerIndex) -> &Matrix {
