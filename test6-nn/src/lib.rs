@@ -1900,7 +1900,8 @@ mod tests {
             epocs,
             learning_rate,
             Some(&CheckOptions::all_checks()),
-        );
+        )
+        .unwrap();
 
         // predict
         let tr_ex = NDTrainingDataPoint {
@@ -1959,7 +1960,8 @@ mod tests {
             cost_decreasing_check: true,
         };
 
-        nn.train(&training_data, epocs, learning_rate, Some(&check_options));
+        nn.train(&training_data, epocs, learning_rate, Some(&check_options))
+            .unwrap();
 
         // predict
         let tr_ex = NDTrainingDataPoint {
@@ -2031,7 +2033,10 @@ mod tests {
             cost_decreasing_check: true,
         };
 
-        nn.train(&training_data, 250, 0.9, Some(&check_options));
+        // TODO: why am I training twice here - should this first one be removed?
+        nn.train(&training_data, 250, 0.9, Some(&check_options))
+            .unwrap();
+
         nn.train_stochastic(
             &training_data,
             1000,
@@ -2041,7 +2046,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
 
         let final_weights = nn.weights.get(&1).unwrap();
         let final_biases = nn.biases.get(&1).unwrap();
@@ -2122,7 +2128,10 @@ mod tests {
             cost_decreasing_check: true,
         };
 
-        nn.train(&training_data, 250, 0.9, Some(&check_options));
+        // TODO: why training twice? should one be removed?
+        nn.train(&training_data, 250, 0.9, Some(&check_options))
+            .unwrap();
+
         nn.train_stochastic(
             &training_data,
             1000,
@@ -2132,7 +2141,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
 
         let final_weights = nn.weights.get(&1).unwrap();
         let final_biases = nn.biases.get(&1).unwrap();
@@ -2209,7 +2219,10 @@ mod tests {
             cost_decreasing_check: true,
         };
 
-        nn.train(&training_data, 250, 0.9, Some(&check_options));
+        // TODO: why training twice? should one be removed?
+        nn.train(&training_data, 250, 0.9, Some(&check_options))
+            .unwrap();
+
         nn.train_stochastic(
             &training_data,
             1000,
@@ -2219,7 +2232,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
 
         let final_weights = nn.weights.get(&1).unwrap();
         let final_biases = nn.biases.get(&1).unwrap();
@@ -2295,7 +2309,8 @@ mod tests {
             cost_decreasing_check: true,
         };
 
-        nn.train(&training_data, epocs, learning_rate, Some(&check_options));
+        nn.train(&training_data, epocs, learning_rate, Some(&check_options))
+            .unwrap();
 
         // predict
         let tr_ex = NDTrainingDataPoint {
@@ -2388,7 +2403,8 @@ mod tests {
             Some(early_stop_config),
             None,
             None,
-        );
+        )
+        .unwrap();
 
         println!("\nin test, after training");
 
@@ -2491,7 +2507,8 @@ mod tests {
             Some(early_stop_config),
             None,
             None,
-        );
+        )
+        .unwrap();
 
         println!("\nin test, after training");
 
@@ -2596,7 +2613,8 @@ mod tests {
             Some(early_stop_config),
             None,
             None,
-        );
+        )
+        .unwrap();
 
         println!("\nin test, after training");
 
