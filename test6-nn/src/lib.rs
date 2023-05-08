@@ -1764,7 +1764,7 @@ mod tests {
 
     #[test]
     pub fn test_cost_for_training_set_iterative_impl() {
-        let mut nn = get_three_layer_multiple_output_nn_for_test();
+        let nn = get_three_layer_multiple_output_nn_for_test();
 
         let mut training_data = Vec::new();
 
@@ -1944,11 +1944,13 @@ mod tests {
 
         println!("initial weights:");
         for (l, w) in nn.weights.iter() {
+            println!("layer {} w:", l);
             println!("{}", w);
         }
 
         println!("initial biases:");
         for (l, b) in nn.biases.iter() {
+            println!("layer {} b:", l);
             println!("{}", b);
         }
 

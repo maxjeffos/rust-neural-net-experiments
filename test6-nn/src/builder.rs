@@ -150,7 +150,7 @@ impl NeuralNetworkBuilder {
         layer_infos.insert(0, LayerConfig::new_with_initializer(None, None));
 
         if let Some(input_layer_size) = self.input_layer_size {
-            sizes.push(self.input_layer_size.unwrap());
+            sizes.push(input_layer_size);
         } else {
             panic!("Input layer size not specified");
         }

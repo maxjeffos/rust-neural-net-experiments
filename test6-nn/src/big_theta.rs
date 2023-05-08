@@ -4,8 +4,6 @@ use std::collections::HashMap;
 use crate::errors::{IndexOutOfBoundsError, InvalidLayerIndex, NeuralNetworkError};
 use crate::LayerIndex;
 
-// derive PartialEq
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct BigTheta {
     pub sizes: Vec<usize>,
@@ -420,7 +418,7 @@ mod tests {
     #[test]
     fn test_divide_scalar_return_new_works() {
         let sizes = vec![2, 3, 1];
-        let mut big_theta = create_big_theta_for_test_with_scale_factor(&sizes, 2.0);
+        let big_theta = create_big_theta_for_test_with_scale_factor(&sizes, 2.0);
 
         let bt_new = big_theta.divide_scalar_return_new(2.0);
 

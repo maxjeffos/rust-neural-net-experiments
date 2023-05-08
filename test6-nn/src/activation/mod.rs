@@ -118,9 +118,6 @@ pub fn activate_derivative_vector(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use common::column_vector;
-
     // // Used for test only
 
     // #[derive(Debug, Clone)]

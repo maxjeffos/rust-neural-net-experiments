@@ -1,6 +1,4 @@
-use rand::distributions::{Distribution, Standard, Uniform};
-use rand::Rng;
-use rand_distr::num_traits::Float;
+use rand::distributions::{Distribution, Uniform};
 use rand_distr::Normal;
 use rayon::prelude::*;
 use std::fmt;
@@ -1502,8 +1500,8 @@ mod tests {
 
     #[test]
     fn subtract() {
-        let mut m1 = column_vector_matrix![1.0, 2.0, 3.0];
-        let mut m2 = column_vector_matrix![1.0, 2.0, 3.0];
+        let m1 = column_vector_matrix![1.0, 2.0, 3.0];
+        let m2 = column_vector_matrix![1.0, 2.0, 3.0];
 
         let m = m1.subtract(&m2);
 
@@ -1891,7 +1889,6 @@ mod column_vector_tests {
 
         // check that one can clone a column vector
         let cv = ColumnVector::new(&[1.0, 2.0, 3.0]);
-        let cv2 = cv.clone();
         let cvm: Matrix = cv.into();
         assert_eq!(cvm.num_rows, 3);
         assert_eq!(cvm.num_columns, 1);

@@ -1,5 +1,4 @@
-use rand::distributions::{Distribution, Standard, Uniform};
-use rand::Rng;
+use rand::distributions::Distribution;
 use rand_distr::Normal;
 use std::fmt;
 
@@ -794,8 +793,8 @@ mod tests {
 
     #[test]
     fn minus_works() {
-        let mut m1 = old_column_vector_matrix![1.0, 2.0, 3.0];
-        let mut m2 = old_column_vector_matrix![1.0, 2.0, 3.0];
+        let m1 = old_column_vector_matrix![1.0, 2.0, 3.0];
+        let m2 = old_column_vector_matrix![1.0, 2.0, 3.0];
 
         let m = m1.minus(&m2);
 
