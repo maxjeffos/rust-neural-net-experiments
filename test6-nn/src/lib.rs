@@ -28,30 +28,17 @@ use training_log::TrainingSessionLogger;
 pub mod layer_config;
 use layer_config::LayerConfig;
 
+pub mod cost;
+use cost::quadratic_cost;
+
 type LayerIndex = usize;
 
 use common::linalg::{
-    euclidian_distance, euclidian_length, square, ColumnVector, Matrix, MatrixShape,
+    euclidian_distance, euclidian_length, ColumnVector, Matrix, MatrixShape,
 };
 
 mod errors;
-use errors::{InvalidLayerIndex, NeuralNetworkError};
-
-// Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
-// Neilson does the divide by 2
-// I'm doing the divide by 2
-pub fn quadratic_cost(desired_v: &ColumnVector, actual_v: &ColumnVector) -> f64 {
-    if desired_v.num_elements() != actual_v.num_elements() {
-        panic!("expected and actual outputs must have the same length");
-    }
-
-    desired_v
-        .iter_with(actual_v)
-        .map(|(exp, act)| exp - act)
-        .map(square)
-        .sum::<f64>()
-        / 2.0
-}
+use errors::{InvalidLayerIndex, NeuralNetworkError, VectorDimensionMismatch};
 
 // pub enum Optimizer {
 //     SGD(f64),
@@ -268,6 +255,10 @@ impl SimpleNeuralNetwork {
         MatrixShape::new(self.sizes[layer_index], self.sizes[layer_index - 1])
     }
 
+    pub fn output_layer_index(&self) -> LayerIndex {
+        self.num_layers() - 1
+    }
+
     // TODO(dedupe): this also exists in BigTheta. Should I just use a BigTheta in SimpleNeuralNetwork?
     fn weights_at_layer_mut(
         &mut self,
@@ -366,34 +357,35 @@ impl SimpleNeuralNetwork {
         intermediates
     }
 
-    pub fn cost_single_tr_ex(&self, tr_ex: &NDTrainingDataPoint) -> f64 {
+    /// Given the single training example, feed the input forward through the network to compute the output.
+    /// Then compute the cost based on that computed output and the desired output (found in the training example).
+    pub fn cost_single_tr_ex(
+        &self,
+        tr_ex: &NDTrainingDataPoint,
+    ) -> Result<f64, VectorDimensionMismatch> {
         if tr_ex.input_v.num_elements() != self.sizes[0] {
-            panic!(
+            return Err(VectorDimensionMismatch::new_with_msg(
+                tr_ex.input_v.num_elements(),
+                self.sizes[0],
                 "input_v must have the same number of elements as the number of neurons in the input layer"
-            );
+            ));
         }
 
         let output_v = self.feed_forward(&tr_ex.input_v);
-
-        if output_v.num_elements() != tr_ex.desired_output_v.num_elements() {
-            println!("output_v len: {}", output_v.num_elements());
-            println!(
-                "r_ex.desired_output_v len: {}",
-                tr_ex.desired_output_v.num_elements()
-            );
-
-            panic!("output_v and desired_output_v must have the same length");
-        }
-
         quadratic_cost(&tr_ex.desired_output_v, &output_v)
     }
 
-    pub fn cost_training_set(&self, training_data: &[NDTrainingDataPoint]) -> f64 {
-        training_data
+    /// Computes the cost for a set of training points
+    pub fn cost_training_set(
+        &self,
+        training_data: &[NDTrainingDataPoint],
+    ) -> Result<f64, VectorDimensionMismatch> {
+        let sum = training_data
             .par_iter()
             .map(|tr_ex| self.cost_single_tr_ex(tr_ex))
-            .sum::<f64>()
-            / training_data.len() as f64
+            .try_reduce(|| 0.0, |acc, cost| Ok(acc + cost))?;
+
+        Ok(sum / training_data.len() as f64)
     }
 
     // returning a Vec<f64> instead of a ColumnVector here because I don't think we'll do any math with it in its raw form.
@@ -458,7 +450,10 @@ impl SimpleNeuralNetwork {
     }
 
     /// Used for gradient checking
-    fn approximate_cost_gradient(&self, training_data: &Vec<NDTrainingDataPoint>) -> Vec<f64> {
+    fn approximate_cost_gradient(
+        &self,
+        training_data: &Vec<NDTrainingDataPoint>,
+    ) -> Result<Vec<f64>, VectorDimensionMismatch> {
         let mut big_theta_v = self.unroll_weights_and_biases();
         let mut gradient = Vec::new();
 
@@ -467,11 +462,11 @@ impl SimpleNeuralNetwork {
 
             big_theta_v[i] = orig_i_value + GRADIENT_CHECK_EPSILON;
             let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_plus_epsilon = temp_nn.cost_training_set(&training_data);
+            let cost_plus_epsilon = temp_nn.cost_training_set(&training_data)?;
 
             big_theta_v[i] = orig_i_value - GRADIENT_CHECK_EPSILON;
             let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_minus_epsilon = temp_nn.cost_training_set(training_data);
+            let cost_minus_epsilon = temp_nn.cost_training_set(training_data)?;
 
             big_theta_v[i] = orig_i_value; // important - restore the orig value
 
@@ -479,7 +474,8 @@ impl SimpleNeuralNetwork {
                 (cost_plus_epsilon - cost_minus_epsilon) / GRADIENT_CHECK_TWICE_EPSILON;
             gradient.push(approx_cost_fn_partial_derivative);
         }
-        gradient
+
+        Ok(gradient)
     }
 
     // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
@@ -490,8 +486,7 @@ impl SimpleNeuralNetwork {
         desired_output_v: &ColumnVector,
         output_layer_z_v: &ColumnVector,
     ) -> ColumnVector {
-        let l_last_layer = self.num_layers() - 1;
-        let layer_info = self.layer_infos.get(&l_last_layer).unwrap();
+        let layer_info = self.layer_infos.get(&self.output_layer_index()).unwrap();
         let activation_function = layer_info.activation_function.as_ref().unwrap();
 
         output_activation_v
@@ -556,50 +551,9 @@ impl SimpleNeuralNetwork {
         error_vectors
     }
 
-    fn compute_gradients(
-        &mut self,
-        per_tr_ex_data: &Vec<(
-            HashMap<usize, FeedForwardIntermediates>,
-            HashMap<usize, ColumnVector>,
-        )>, // outer Vec is per training example
-    ) -> HashMap<LayerIndex, (Matrix, ColumnVector)> {
-        let mut gradients = HashMap::new();
-        let num_training_examples = per_tr_ex_data.len();
-
-        for l in (1..self.num_layers()).rev() {
-            let mut weights_partials_matrix_avg =
-                Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
-            let mut bias_partials_vector_avg = ColumnVector::new_zero_vector(self.sizes[l]);
-
-            per_tr_ex_data
-                .iter()
-                .for_each(|(intermediates, error_vectors)| {
-                    let prev_layer_activations_v =
-                        &intermediates.get(&(l - 1)).unwrap().activation_v;
-
-                    let this_layer_err_v = error_vectors.get(&l).unwrap();
-
-                    let prev_layer_activations_v_transpose = prev_layer_activations_v.transpose();
-
-                    let weights_grad =
-                        this_layer_err_v.mult_matrix(&prev_layer_activations_v_transpose);
-
-                    weights_partials_matrix_avg.add_mut(&weights_grad);
-                    bias_partials_vector_avg.add_mut(this_layer_err_v);
-                });
-
-            weights_partials_matrix_avg.div_scalar_mut(num_training_examples as f64);
-            bias_partials_vector_avg.div_scalar_mut(num_training_examples as f64);
-
-            gradients.insert(l, (weights_partials_matrix_avg, bias_partials_vector_avg));
-        }
-
-        gradients
-    }
-
-    /// `compute_gradients_fresh` computes the gradients for the neural network using backpropagation.
+    /// `compute_gradients` computes the gradients for the neural network using backpropagation.
     /// This function takes a more structured input data type and returns a more structured output data type.
-    fn compute_gradients_fresh(
+    fn compute_gradients(
         &mut self,
         // A slice of `ForwardAndBackPassData` instances, one for each training example
         forward_and_back_pass_data_for_all_training_examples: &[ForwardAndBackPassData],
@@ -927,7 +881,9 @@ impl SimpleNeuralNetwork {
         learning_rate: f64,
         check_options: Option<&CheckOptions>,
     ) -> Result<(), NeuralNetworkError> {
-        let initial_cost = self.cost_training_set(&training_data);
+        let initial_cost = self
+            .cost_training_set(&training_data)
+            .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
         println!("initial cost across entire training set: {}", initial_cost);
 
         // here's what this does:
@@ -971,7 +927,7 @@ impl SimpleNeuralNetwork {
             );
 
             // note: compute_gradients takes data for ALL training examples
-            let mut gradients = self.compute_gradients_fresh(&forward_pass_data);
+            let mut gradients = self.compute_gradients(&forward_pass_data);
 
             // temp - print the gradients
             // let g1 = gradients.get(&1).unwrap();
@@ -980,7 +936,9 @@ impl SimpleNeuralNetwork {
             // println!("biases grad: \n{}", g1.1);
 
             if check_options.gradient_checking {
-                let approx_gradients_big_v = self.approximate_cost_gradient(training_data);
+                let approx_gradients_big_v = self
+                    .approximate_cost_gradient(training_data)
+                    .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
                 // unroll the actual gradients
                 let d_vec = gradients.unroll();
 
@@ -1019,7 +977,10 @@ impl SimpleNeuralNetwork {
             println!("biases in layer 1: \n{}", l1_biases);
 
             if check_options.cost_decreasing_check {
-                let cost = self.cost_training_set(&training_data);
+                let cost = self
+                    .cost_training_set(&training_data)
+                    .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
+
                 if cost > prev_cost {
                     panic!(
                         "cost increased from {} to {} on epoc {}",
@@ -1034,7 +995,9 @@ impl SimpleNeuralNetwork {
             // TODO: stop on convergence
         }
 
-        let final_cost = self.cost_training_set(&training_data);
+        let final_cost = self
+            .cost_training_set(&training_data)
+            .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
         println!(
             "\ncost across entire training set after {} epocs: {}",
             epocs_count, final_cost,
@@ -1053,10 +1016,12 @@ impl SimpleNeuralNetwork {
         early_stop_config: Option<EarlyStopConfig>,
         full_cost_update_every: Option<usize>, // After how every epocs do you want to do a full cost update across the entire training set, if at all.
         session_logger: Option<TrainingSessionLogger>,
-    ) {
+    ) -> Result<(), NeuralNetworkError> {
         println!("computing initial cross accross entire training dataset...");
         let mut t_init_cost = SimpleTimer::start_new("t_init_cost");
-        let initial_cost = self.cost_training_set(&training_data);
+        let initial_cost = self
+            .cost_training_set(&training_data)
+            .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
         t_init_cost.stop();
         println!("initial cost across entire training set: {}", initial_cost);
         println!("t_init_cost: {}", t_init_cost);
@@ -1361,7 +1326,9 @@ impl SimpleNeuralNetwork {
             //     });
 
             if check_options.cost_decreasing_check {
-                let cost = self.cost_training_set(&training_data);
+                let cost = self
+                    .cost_training_set(&training_data)
+                    .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
                 println!(
                     "cost across training set after epoch {}: {}",
                     epochs_count, cost
@@ -1382,20 +1349,24 @@ impl SimpleNeuralNetwork {
             if let Some(full_cost_update_every) = full_cost_update_every {
                 if epochs_count % full_cost_update_every == 0 {
                     println!(
-                        "\nCost Update\ncomputing cross across entire training dataset after {} epocs...",
+                        "\nCost Update\ncomputing cost across entire training dataset after {} epocs...",
                         epochs_count
                     );
-                    let training_set_cost = self.cost_training_set(&training_data);
+                    let training_set_cost = self
+                        .cost_training_set(&training_data)
+                        .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
                     println!(
                         "  - cost across entire training set after {} epocs: {}",
                         epochs_count, training_set_cost,
                     );
 
                     println!(
-                        "computing cross across entire test dataset after {} epocs...",
+                        "computing cost across entire test dataset after {} epocs...",
                         epochs_count
                     );
-                    let test_set_cost = self.cost_training_set(&training_data);
+                    let test_set_cost = self
+                        .cost_training_set(&training_data)
+                        .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
                     println!(
                         "  - cost across test set after {} epocs: {}",
                         epochs_count, training_set_cost,
@@ -1423,7 +1394,9 @@ impl SimpleNeuralNetwork {
                         // so don't re-compute it
                         test_set_cost
                     } else {
-                        let test_set_cost = self.cost_training_set(esc.test_data);
+                        let test_set_cost = self
+                            .cost_training_set(esc.test_data)
+                            .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
                         test_set_cost
                     };
 
@@ -1437,11 +1410,15 @@ impl SimpleNeuralNetwork {
         }
 
         println!("computing final cross accross entire training dataset...");
-        let final_cost = self.cost_training_set(&training_data);
+        let final_cost = self
+            .cost_training_set(&training_data)
+            .map_err(|e| NeuralNetworkError::VectorDimensionMismatch(e))?;
         println!(
             "\ncost across entire training set after {} epocs: {}",
             epochs_count, final_cost,
         );
+
+        Ok(())
     }
 }
 
@@ -1792,19 +1769,6 @@ mod tests {
     }
 
     #[test]
-    pub fn test_quadratic_cost_fn() {
-        let inputs = column_vector![0.0, 0.5, 1.0];
-        let targets = column_vector![0.0, 0.5, 1.0];
-        let cost = quadratic_cost(&inputs, &targets);
-        assert_eq!(cost, 0.0);
-
-        let inputs = column_vector![4.0, 4.0];
-        let targets = column_vector![2.0, 2.0];
-        let cost = quadratic_cost(&inputs, &targets);
-        assert_eq!(cost, 4.0);
-    }
-
-    #[test]
     pub fn test_cost_single_tr_ex_single_output_neuron() {
         let nn = get_simple_get_2_3_1_nn_for_test();
 
@@ -1814,7 +1778,7 @@ mod tests {
             desired_output_v: column_vector![3.0],
         };
 
-        let c0 = nn.cost_single_tr_ex(&tr_ex);
+        let c0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
 
         // manually compute the expected cost for the single neuron in the last layer
         let a_output = nn.feed_forward(&tr_ex.input_v);
@@ -1837,7 +1801,7 @@ mod tests {
             desired_output_v: column_vector![2.0, 2.0],
         };
 
-        let c0 = nn.cost_single_tr_ex(&tr_ex);
+        let c0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
 
         // manually compute the expected cost for the single neuron in the last layer
         // this uses a different method to compute the cost, but it is mathematically equivalent to that used
@@ -1881,17 +1845,17 @@ mod tests {
             desired_output_v: column_vector![2.0, 2.0],
         });
 
-        let c = nn.cost_training_set(&training_data);
-        let c0 = nn.cost_single_tr_ex(&training_data[0]);
-        let c1 = nn.cost_single_tr_ex(&training_data[1]);
-        let c2 = nn.cost_single_tr_ex(&training_data[2]);
+        let c = nn.cost_training_set(&training_data).unwrap();
+        let c0 = nn.cost_single_tr_ex(&training_data[0]).unwrap();
+        let c1 = nn.cost_single_tr_ex(&training_data[1]).unwrap();
+        let c2 = nn.cost_single_tr_ex(&training_data[2]).unwrap();
         let c_avg = (c0 + c1 + c2) / 3.0;
         assert_eq!(c, c_avg);
 
         // now do the same cost test with big_theta_v
         let big_theta_v = nn.unroll_weights_and_biases();
         let reshaped = nn.reshape_weights_and_biases(&big_theta_v);
-        let cost_big_theta_v = reshaped.cost_training_set(&training_data);
+        let cost_big_theta_v = reshaped.cost_training_set(&training_data).unwrap();
         assert_eq!(cost_big_theta_v, c);
 
         // from here on, I'm testing the towards_backprop stuff
@@ -2010,7 +1974,7 @@ mod tests {
 
         let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2021,7 +1985,7 @@ mod tests {
 
         let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.05));
@@ -2069,7 +2033,7 @@ mod tests {
 
         let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2080,7 +2044,7 @@ mod tests {
         };
         let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
@@ -2162,7 +2126,7 @@ mod tests {
             "predicted_output_0: {} (desired is {} (BLUE))",
             &predicted_output_0, BLUE
         );
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2176,7 +2140,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (ORANGE))",
             &predicted_output_1, ORANGE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.05));
@@ -2253,7 +2217,7 @@ mod tests {
             "predicted_output_0: {} (desired is {} (BLUE))",
             &predicted_output_0, BLUE
         );
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2267,7 +2231,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (ORANGE))",
             &predicted_output_1, ORANGE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.05));
@@ -2340,7 +2304,7 @@ mod tests {
             "predicted_output_0: {} (desired is {} (BLUE))",
             &predicted_output_0, BLUE
         );
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2354,7 +2318,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (ORANGE))",
             &predicted_output_1, ORANGE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.05));
@@ -2404,7 +2368,7 @@ mod tests {
         };
         let predicted_output_0 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_0: {}", &predicted_output_0);
-        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_0 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_0: \n{}", &cost_of_predicted_0);
 
         // predict
@@ -2415,7 +2379,7 @@ mod tests {
         };
         let predicted_output_1 = nn.feed_forward(&tr_ex.input_v).into_value();
         println!("predicted_output_1: {}", &predicted_output_1);
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         assert!(approx_eq!(f64, predicted_output_0, BLUE, epsilon = 0.025));
@@ -2503,7 +2467,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (BLUE))",
             &predicted_output_1, BLUE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         // prediction 1
@@ -2517,7 +2481,7 @@ mod tests {
             "predicted_output_2: {} (desired is {} (ORANGE))",
             &predicted_output_2, ORANGE
         );
-        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_2: \n{}", &cost_of_predicted_2);
 
         assert!(approx_eq!(f64, predicted_output_1, BLUE, epsilon = 0.05));
@@ -2606,7 +2570,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (BLUE))",
             &predicted_output_1, BLUE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         // prediction 1
@@ -2620,7 +2584,7 @@ mod tests {
             "predicted_output_2: {} (desired is {} (ORANGE))",
             &predicted_output_2, ORANGE
         );
-        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_2: \n{}", &cost_of_predicted_2);
 
         assert!(approx_eq!(f64, predicted_output_1, BLUE, epsilon = 0.05));
@@ -2711,7 +2675,7 @@ mod tests {
             "predicted_output_1: {} (desired is {} (BLUE))",
             &predicted_output_1, BLUE
         );
-        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_1 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_1: \n{}", &cost_of_predicted_1);
 
         // prediction 1
@@ -2725,7 +2689,7 @@ mod tests {
             "predicted_output_2: {} (desired is {} (ORANGE))",
             &predicted_output_2, ORANGE
         );
-        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex);
+        let cost_of_predicted_2 = nn.cost_single_tr_ex(&tr_ex).unwrap();
         println!("cost_of_predicted_2: \n{}", &cost_of_predicted_2);
 
         assert!(approx_eq!(f64, predicted_output_1, BLUE, epsilon = 0.05));

@@ -109,18 +109,18 @@ fn main() {
     println!("p_output_v: {}", p_output_v);
     println!("desired_output_v: {}", &t0.desired_output_v);
 
-    let t0_cost = nn.cost_single_tr_ex(t0);
+    let t0_cost = nn.cost_single_tr_ex(t0).unwrap();
     println!("t0_cost: {}", t0_cost);
 
     for i_test in 0..50 {
         let t = test_data.get(i_test).unwrap();
-        let cost = nn.cost_single_tr_ex(t);
+        let cost = nn.cost_single_tr_ex(t).unwrap();
         println!("cost of {}th: {}", i_test, cost);
     }
 
     // let sub_tr_set = &test_data[0..1000];
     // println!("computing cost of a sub-set of the test data...");
-    let test_set_cost = nn.cost_training_set(&test_data);
+    let test_set_cost = nn.cost_training_set(&test_data).unwrap();
     println!("\ntest_set_cost: {}", test_set_cost);
 
     t_total.stop();
