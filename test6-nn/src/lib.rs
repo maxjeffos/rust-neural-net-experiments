@@ -33,9 +33,7 @@ use cost::quadratic_cost;
 
 type LayerIndex = usize;
 
-use common::linalg::{
-    euclidian_distance, euclidian_length, ColumnVector, Matrix, MatrixShape,
-};
+use common::linalg::{euclidian_distance, euclidian_length, ColumnVector, Matrix, MatrixShape};
 
 mod errors;
 use errors::{InvalidLayerIndex, NeuralNetworkError, VectorDimensionMismatch};
@@ -149,6 +147,7 @@ struct ForwardAndBackPassData {
 // }
 
 /// LayerGradients encapsulates the gradients for a single layer, seperately for the weights and biases.
+/// I think this is no longer used because where it was used is now using BigTheta instead.
 struct LayerGradients {
     weight_gradients: Matrix,
     bias_gradients: ColumnVector,
@@ -193,21 +192,29 @@ fn z(weight_matrix: &Matrix, bias_v: &ColumnVector, input_v: &ColumnVector) -> C
     weight_matrix.mult_vector(input_v).add_chaining(bias_v)
 }
 
+pub struct EarlyStopConfig<'a> {
+    pub test_data: &'a [NDTrainingDataPoint],
+    pub cost_threshold: f64,
+    pub check_every: usize,
+}
+
 pub struct SimpleNeuralNetwork {
     sizes: Vec<LayerIndex>,
 
-    // A HashMap of the weights keyed by the layer index.
-    // The dimensions will be [rows x columns] [# neurons in the previous layer x # number neurons in the next layer]
+    /// A HashMap of the weights keyed by the layer index.
+    /// The dimensions will be [rows x columns] [# neurons in the previous layer x # neurons in the next layer].
     weights: HashMap<LayerIndex, Matrix>,
 
-    // A HashMap of the biases keyed by the layer index.
-    // The dimension of each ColumnVector will be [# number neurons in the layer]
+    /// A HashMap of the biases keyed by the layer index.
+    /// The dimension of each ColumnVector will be the number neurons in the layer.
     biases: HashMap<LayerIndex, ColumnVector>,
 
+    /// Meta data about each layer, such as the activation function and the initializer used.
     layer_infos: HashMap<LayerIndex, LayerConfig>,
 }
 
 impl SimpleNeuralNetwork {
+    /// Creates a new SimpleNeuralNetwork with the given number of layers. This is old and you should really use the builder instead.
     pub fn new(sizes: Vec<usize>) -> Self {
         let mut biases = HashMap::new();
         let mut weights = HashMap::new();
@@ -240,23 +247,28 @@ impl SimpleNeuralNetwork {
         }
     }
 
+    /// Gets the number of layers in the network.
     pub fn num_layers(&self) -> usize {
         self.sizes.len()
     }
 
+    /// Tells you if the given layer index corresponds to the output layer.
     pub fn is_output_layer(&self, layer_index: LayerIndex) -> bool {
         layer_index == self.num_layers() - 1
     }
 
+    /// Gets the layer index of the output layer
+    pub fn output_layer_index(&self) -> LayerIndex {
+        self.num_layers() - 1
+    }
+
+    /// Gets the dimensions (shape) of the weight matrix for the given layer.
+    /// Useful in gradient checking.
     pub fn get_weight_matrix_shape(&self, layer_index: LayerIndex) -> MatrixShape {
         if layer_index == 0 {
             panic!("not valid for input layer (because it has no weights/biases");
         }
         MatrixShape::new(self.sizes[layer_index], self.sizes[layer_index - 1])
-    }
-
-    pub fn output_layer_index(&self) -> LayerIndex {
-        self.num_layers() - 1
     }
 
     // TODO(dedupe): this also exists in BigTheta. Should I just use a BigTheta in SimpleNeuralNetwork?
@@ -281,26 +293,6 @@ impl SimpleNeuralNetwork {
             .ok_or(NeuralNetworkError::InvalidLayerIndex(InvalidLayerIndex(
                 layer_index,
             )))
-    }
-
-    // THIS MAY NOT BE RIGHT!
-    // Not sure if fan in is the total number of inbound connections at a layer, or just
-    // the number of neurons in the previous layer.
-    pub fn get_fan_in(&self, l: LayerIndex) -> usize {
-        if l == 0 {
-            panic!("not valid for input layer");
-        }
-        self.sizes[l - 1] * self.sizes[l]
-    }
-
-    // THIS MAY NOT BE RIGHT!
-    // Not sure if fan out is the total number of outbound connections at a layer, or just
-    // the number of neurons in the next layer.
-    pub fn get_fan_out(&self, l: LayerIndex) -> usize {
-        if self.is_output_layer(l) {
-            panic!("not valid for output layer");
-        }
-        self.sizes[l] * self.sizes[l + 1]
     }
 
     // TODO: use new methods here for getting layer weights / biases and return Result<ColumVector, NeuralNetworkError>
@@ -388,99 +380,10 @@ impl SimpleNeuralNetwork {
         Ok(sum / training_data.len() as f64)
     }
 
-    // returning a Vec<f64> instead of a ColumnVector here because I don't think we'll do any math with it in its raw form.
-    // So using it as a Vec will probably give me maximum flexibility.
-    fn unroll_weights_and_biases(&self) -> Vec<f64> {
-        let mut unrolled_vec = Vec::new();
-        for l in 1..self.num_layers() {
-            unrolled_vec.extend_from_slice(&self.weights.get(&l).unwrap().data);
-            unrolled_vec.extend_from_slice(&self.biases.get(&l).unwrap().get_data_as_slice());
-        }
-        unrolled_vec
-    }
-
-    fn unroll_gradients(
-        &self,
-        // gradients: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
-        gradients: &HashMap<LayerIndex, LayerGradients>,
-    ) -> Vec<f64> {
-        let mut unrolled_vec = Vec::new();
-        for l in 1..self.num_layers() {
-            let this_layer_gradients = gradients.get(&l).unwrap();
-            unrolled_vec.extend_from_slice(this_layer_gradients.weight_gradients.data.as_slice()); // .0 is the weights matrix
-            unrolled_vec.extend_from_slice(this_layer_gradients.bias_gradients.get_data_as_slice());
-            // .0 is the weights matrix
-        }
-        unrolled_vec
-    }
-
-    /// reshape theta_v in accordance with the sizes of the layers
-    fn reshape_weights_and_biases(&self, big_theta_v: &[f64]) -> SimpleNeuralNetwork {
-        // we know the number of layers and the size of each one
-        // so we know what size of weights and biases we need
-        // just need to pull things out correctly form big_theta_v.
-
-        let mut weights = HashMap::new();
-        let mut biases = HashMap::new();
-
-        let mut ptr: usize = 0;
-
-        for l in 1..self.num_layers() {
-            let w_shape = self.get_weight_matrix_shape(l);
-            let w_data = &big_theta_v[ptr..(ptr + w_shape.data_length())];
-            let w = Matrix::new_with_shape_and_values(&w_shape, w_data);
-            ptr += w_shape.data_length();
-            // TODO: see if there's a way to do this with ColumnVector::from_vec because that would be without cloning
-            // and could significantly speed this up since big_theta_v can be really huge
-            let b = ColumnVector::new(&big_theta_v[ptr..(ptr + self.sizes[l])]);
-            ptr += self.sizes[l];
-
-            weights.insert(l, w);
-            biases.insert(l, b);
-        }
-
-        let layer_infos = self.layer_infos.clone();
-
-        SimpleNeuralNetwork {
-            sizes: self.sizes.clone(),
-            weights,
-            biases,
-            layer_infos,
-        }
-    }
-
-    /// Used for gradient checking
-    fn approximate_cost_gradient(
-        &self,
-        training_data: &Vec<NDTrainingDataPoint>,
-    ) -> Result<Vec<f64>, VectorDimensionMismatch> {
-        let mut big_theta_v = self.unroll_weights_and_biases();
-        let mut gradient = Vec::new();
-
-        for i in 0..big_theta_v.len() {
-            let orig_i_value = big_theta_v[i];
-
-            big_theta_v[i] = orig_i_value + GRADIENT_CHECK_EPSILON;
-            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_plus_epsilon = temp_nn.cost_training_set(&training_data)?;
-
-            big_theta_v[i] = orig_i_value - GRADIENT_CHECK_EPSILON;
-            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
-            let cost_minus_epsilon = temp_nn.cost_training_set(training_data)?;
-
-            big_theta_v[i] = orig_i_value; // important - restore the orig value
-
-            let approx_cost_fn_partial_derivative =
-                (cost_plus_epsilon - cost_minus_epsilon) / GRADIENT_CHECK_TWICE_EPSILON;
-            gradient.push(approx_cost_fn_partial_derivative);
-        }
-
-        Ok(gradient)
-    }
-
-    // Backprop Equation (the one that is unlabeled but follows after BP1a. I assume then ment to label it BP1b)
-    // from the Neilson book
-    fn err_last_layer(
+    /// Computes the error in the output layer.
+    /// Backprop Equation (the one that is unlabeled but follows after BP1a. I assume they meant to label it BP1b)
+    /// from the Neilson book
+    fn err_output_layer(
         &self,
         output_activation_v: &ColumnVector,
         desired_output_v: &ColumnVector,
@@ -497,7 +400,8 @@ impl SimpleNeuralNetwork {
             ))
     }
 
-    // Backprop Equation BP2 from the Neilson book
+    /// Computes the error in the non-output layers.
+    /// Backprop Equation BP2 from the Neilson book
     fn err_non_last_layer(
         &self,
         layer: LayerIndex,
@@ -538,7 +442,7 @@ impl SimpleNeuralNetwork {
 
             let err_v = if l == last_layer_index {
                 let activations_v = &intermediates[&last_layer_index].activation_v;
-                self.err_last_layer(&activations_v, desired_output_v, &z_v)
+                self.err_output_layer(&activations_v, desired_output_v, &z_v)
             } else {
                 let error_vector_for_plus_one_layer = error_vectors.get(&(l + 1)).unwrap();
                 // println!("in backprop, l = {}", l);
@@ -608,90 +512,7 @@ impl SimpleNeuralNetwork {
         }
     }
 
-    fn compute_gradients_par(
-        &mut self,
-        per_tr_ex_data: &Vec<(
-            HashMap<usize, FeedForwardIntermediates>,
-            HashMap<usize, ColumnVector>,
-        )>, // outer Vec is per training example
-    ) -> BigTheta {
-        // let mut gradients = HashMap::new();
-        let mut weights_matricies = HashMap::new();
-        let mut bias_vectors = HashMap::new();
-
-        let num_training_examples = per_tr_ex_data.len();
-
-        for l in (1..self.num_layers()).rev() {
-            // let mut weights_partials_matrix_avg =
-            //     Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
-            // let mut bias_partials_vector_avg = ColumnVector::new_zero_vector(self.sizes[l]);
-
-            let mut weights_partials_matrix_avg = Arc::new(Mutex::new(Some(
-                Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]),
-            )));
-            let mut bias_partials_vector_avg = Arc::new(Mutex::new(Some(
-                ColumnVector::new_zero_vector(self.sizes[l]),
-            )));
-
-            // let mut magic_v = Arc::new(Mutex::new(Some(Vec::<usize>::new())));
-
-            per_tr_ex_data
-                .par_iter()
-                .for_each(|(intermediates, error_vectors)| {
-                    let prev_layer_activations_v =
-                        &intermediates.get(&(l - 1)).unwrap().activation_v;
-
-                    let this_layer_err_v = error_vectors.get(&l).unwrap();
-
-                    // let prev_layer_activations_v_transpose = prev_layer_activations_v.transpose();
-                    // let weights_grad =
-                    //     this_layer_err_v.mult_matrix(&prev_layer_activations_v_transpose);
-
-                    let weights_grad = this_layer_err_v.outer_product(&prev_layer_activations_v);
-
-                    let mut weights_partials_matrix_avg =
-                        weights_partials_matrix_avg.lock().unwrap();
-                    let mut bias_partials_vector_avg = bias_partials_vector_avg.lock().unwrap();
-
-                    weights_partials_matrix_avg
-                        .as_mut()
-                        .unwrap()
-                        .add_mut(&weights_grad);
-                    bias_partials_vector_avg
-                        .as_mut()
-                        .unwrap()
-                        .add_mut(this_layer_err_v);
-
-                    // weights_partials_matrix_avg.add_in_place(&weights_grad);
-                    // bias_partials_vector_avg.plus_in_place(this_layer_err_v);
-                });
-
-            let mut weights_partials_matrix_avg = weights_partials_matrix_avg.lock().unwrap();
-            let mut bias_partials_vector_avg = bias_partials_vector_avg.lock().unwrap();
-
-            weights_partials_matrix_avg
-                .as_mut()
-                .unwrap()
-                .div_scalar_mut(num_training_examples as f64);
-            bias_partials_vector_avg
-                .as_mut()
-                .unwrap()
-                .div_scalar_mut(num_training_examples as f64);
-
-            let w = weights_partials_matrix_avg.take().unwrap();
-            let b = bias_partials_vector_avg.take().unwrap();
-
-            weights_matricies.insert(l, w);
-            bias_vectors.insert(l, b);
-        }
-
-        BigTheta {
-            sizes: self.sizes.clone(),
-            weights_matricies,
-            bias_vectors,
-        }
-    }
-
+    /// This is the parallel implementation of compute_gradients that is actually used.
     // try splitting the ||ism up by layers, not just by training examples (which might not be worth the overhead?)
     // another thing to try would be to send batches of tr examples to each worker.__rust_force_expr
     fn compute_gradients_par_4(
@@ -790,82 +611,6 @@ impl SimpleNeuralNetwork {
         let mut bias_vectors_mutex_guard = bias_vectors.lock().unwrap();
         let bias_vectors = bias_vectors_mutex_guard.take().unwrap();
         drop(bias_vectors_mutex_guard);
-
-        BigTheta {
-            sizes: self.sizes.clone(),
-            weights_matricies,
-            bias_vectors,
-        }
-    }
-
-    // using Rayon and returning stuff from the par iter
-    fn compute_gradients_par_3(
-        &mut self,
-        per_tr_ex_data: &Vec<(
-            HashMap<usize, FeedForwardIntermediates>,
-            HashMap<usize, ColumnVector>,
-        )>, // outer Vec is per training example
-    ) -> BigTheta {
-        // let mut gradients = HashMap::new();
-        let mut weights_matricies = HashMap::new();
-        let mut bias_vectors = HashMap::new();
-
-        let num_training_examples = per_tr_ex_data.len();
-
-        for l in (1..self.num_layers()).rev() {
-            // let (tx, rx) = channel();
-
-            let components = per_tr_ex_data
-                .par_iter()
-                .map(|(intermediates, error_vectors)| {
-                    let prev_layer_activations_v =
-                        &intermediates.get(&(l - 1)).unwrap().activation_v;
-
-                    let this_layer_err_v = error_vectors.get(&l).unwrap();
-
-                    let weights_grad = this_layer_err_v.outer_product(&prev_layer_activations_v);
-                    let bias_grad = this_layer_err_v.clone(); // TODO: gross. Having trouble sending a reference through the channel.
-
-                    (weights_grad, bias_grad)
-                })
-                // .for_each_with(tx, |s, (intermediates, error_vectors)| {
-                //     let prev_layer_activations_v =
-                //         &intermediates.get(&(l - 1)).unwrap().activation_v;
-                //     let this_layer_err_v = error_vectors.get(&l).unwrap();
-                //     let weights_grad = this_layer_err_v.outer_product(&prev_layer_activations_v);
-                //     let bias_grad = this_layer_err_v.clone(); // TODO: gross. Having trouble sending a reference through the channel.
-                //     // this_layer_err_v is the bias gradient
-                //     s.send((weights_grad, bias_grad)).unwrap();
-                // })
-                .collect::<Vec<(Matrix, ColumnVector)>>();
-
-            // the following data munging is a bit overly verbose and inefficient
-            // could the components be a Vec<(Matrix, &ColumnVector)> in order to avoid the clone above?
-
-            let mut w_items = Vec::<Matrix>::new();
-            let mut b_items = Vec::<ColumnVector>::new();
-            for x in components.into_iter() {
-                w_items.push(x.0);
-                b_items.push(x.1);
-            }
-
-            // now create the averages
-            // let mut w = w_items.iter().fold(Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]), |acc, x| acc.add_in_place(x));
-            let mut w = Matrix::new_zero_matrix(self.sizes[l], self.sizes[l - 1]);
-            w_items
-                .iter()
-                .for_each(|next_w_item| w.add_mut(next_w_item));
-            w.div_scalar_mut(num_training_examples as f64);
-
-            let mut b = ColumnVector::new_zero_vector(self.sizes[l]);
-            b_items
-                .iter()
-                .for_each(|next_b_item| b.add_mut(next_b_item));
-            b.div_scalar_mut(num_training_examples as f64);
-
-            weights_matricies.insert(l, w);
-            bias_vectors.insert(l, b);
-        }
 
         BigTheta {
             sizes: self.sizes.clone(),
@@ -1420,12 +1165,126 @@ impl SimpleNeuralNetwork {
 
         Ok(())
     }
-}
 
-pub struct EarlyStopConfig<'a> {
-    pub test_data: &'a [NDTrainingDataPoint],
-    pub cost_threshold: f64,
-    pub check_every: usize,
+    //////////////////////////////////////////////
+    // methods used for gradient checking
+    // TODO: can these be refactored out of here?
+    //////////////////////////////////////////////
+
+    // returning a Vec<f64> instead of a ColumnVector here because I don't think we'll do any math with it in its raw form.
+    // So using it as a Vec will probably give me maximum flexibility.
+    fn unroll_weights_and_biases(&self) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.num_layers() {
+            unrolled_vec.extend_from_slice(&self.weights.get(&l).unwrap().data);
+            unrolled_vec.extend_from_slice(&self.biases.get(&l).unwrap().get_data_as_slice());
+        }
+        unrolled_vec
+    }
+
+    fn unroll_gradients(
+        &self,
+        // gradients: &HashMap<LayerIndex, (Matrix, ColumnVector)>,
+        gradients: &HashMap<LayerIndex, LayerGradients>,
+    ) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.num_layers() {
+            let this_layer_gradients = gradients.get(&l).unwrap();
+            unrolled_vec.extend_from_slice(this_layer_gradients.weight_gradients.data.as_slice()); // .0 is the weights matrix
+            unrolled_vec.extend_from_slice(this_layer_gradients.bias_gradients.get_data_as_slice());
+            // .0 is the weights matrix
+        }
+        unrolled_vec
+    }
+
+    /// reshape theta_v in accordance with the sizes of the layers
+    fn reshape_weights_and_biases(&self, big_theta_v: &[f64]) -> SimpleNeuralNetwork {
+        // we know the number of layers and the size of each one
+        // so we know what size of weights and biases we need
+        // just need to pull things out correctly form big_theta_v.
+
+        let mut weights = HashMap::new();
+        let mut biases = HashMap::new();
+
+        let mut ptr: usize = 0;
+
+        for l in 1..self.num_layers() {
+            let w_shape = self.get_weight_matrix_shape(l);
+            let w_data = &big_theta_v[ptr..(ptr + w_shape.data_length())];
+            let w = Matrix::new_with_shape_and_values(&w_shape, w_data);
+            ptr += w_shape.data_length();
+            // TODO: see if there's a way to do this with ColumnVector::from_vec because that would be without cloning
+            // and could significantly speed this up since big_theta_v can be really huge
+            let b = ColumnVector::new(&big_theta_v[ptr..(ptr + self.sizes[l])]);
+            ptr += self.sizes[l];
+
+            weights.insert(l, w);
+            biases.insert(l, b);
+        }
+
+        let layer_infos = self.layer_infos.clone();
+
+        SimpleNeuralNetwork {
+            sizes: self.sizes.clone(),
+            weights,
+            biases,
+            layer_infos,
+        }
+    }
+
+    /// Used for gradient checking
+    fn approximate_cost_gradient(
+        &self,
+        training_data: &Vec<NDTrainingDataPoint>,
+    ) -> Result<Vec<f64>, VectorDimensionMismatch> {
+        let mut big_theta_v = self.unroll_weights_and_biases();
+        let mut gradient = Vec::new();
+
+        for i in 0..big_theta_v.len() {
+            let orig_i_value = big_theta_v[i];
+
+            big_theta_v[i] = orig_i_value + GRADIENT_CHECK_EPSILON;
+            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_plus_epsilon = temp_nn.cost_training_set(&training_data)?;
+
+            big_theta_v[i] = orig_i_value - GRADIENT_CHECK_EPSILON;
+            let temp_nn = self.reshape_weights_and_biases(&big_theta_v);
+            let cost_minus_epsilon = temp_nn.cost_training_set(training_data)?;
+
+            big_theta_v[i] = orig_i_value; // important - restore the orig value
+
+            let approx_cost_fn_partial_derivative =
+                (cost_plus_epsilon - cost_minus_epsilon) / GRADIENT_CHECK_TWICE_EPSILON;
+            gradient.push(approx_cost_fn_partial_derivative);
+        }
+
+        Ok(gradient)
+    }
+
+    //////////////////////////////////////////////
+    // The following I think are leftover code.
+    // They have to do with computing the initial w/b values but don't appear to be used.
+    //////////////////////////////////////////////
+
+    // THIS MAY NOT BE RIGHT!
+    // Not sure if fan in is the total number of inbound connections at a layer, or just
+    // the number of neurons in the previous layer.
+    pub fn get_fan_in(&self, l: LayerIndex) -> usize {
+        if l == 0 {
+            panic!("not valid for input layer");
+        }
+        self.sizes[l - 1] * self.sizes[l]
+    }
+
+    // THIS MAY NOT BE RIGHT!
+    // Not sure if fan out is the total number of outbound connections at a layer, or just
+    // the number of neurons in the next layer.
+    pub fn get_fan_out(&self, l: LayerIndex) -> usize {
+        if self.is_output_layer(l) {
+            panic!("not valid for output layer");
+        }
+        self.sizes[l] * self.sizes[l + 1]
+    }
 }
 
 #[cfg(test)]
