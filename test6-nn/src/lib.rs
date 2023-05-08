@@ -264,9 +264,10 @@ impl SimpleNeuralNetwork {
 
     /// Gets the dimensions (shape) of the weight matrix for the given layer.
     /// Useful in gradient checking.
-    pub fn get_weight_matrix_shape(&self, layer_index: LayerIndex) -> MatrixShape {
+    pub fn weight_matrix_shape(&self, layer_index: LayerIndex) -> MatrixShape {
         if layer_index == 0 {
             panic!("not valid for input layer (because it has no weights/biases");
+            // TODO: replace with an error like `NotValidForInputLayer`
         }
         MatrixShape::new(self.sizes[layer_index], self.sizes[layer_index - 1])
     }
@@ -619,6 +620,70 @@ impl SimpleNeuralNetwork {
         }
     }
 
+    /// Compute the gradients using parallelism.
+    /// This impl uses par_iter with map/reduce for vastly improved performance compared to using mutexes, as in previous versions.
+    fn compute_gradients_par_6(
+        &mut self,
+        per_tr_ex_data: &[(
+            HashMap<usize, FeedForwardIntermediates>,
+            HashMap<usize, ColumnVector>,
+        )],
+    ) -> BigTheta {
+        let num_training_examples = per_tr_ex_data.len();
+
+        // TODO: consider extracting this to a method to improve readability. Note that I made a test for this functionality, though
+        // it is just testing the same code, it isn't testing a shared method - see `test_rev_layer_indexs_computation`.
+        let layers_in_from_last_to_1th: Vec<usize> = (1..self.num_layers()).rev().collect();
+
+        let mut weights_matricies = HashMap::<LayerIndex, Matrix>::new();
+        let mut bias_vectors = HashMap::<LayerIndex, ColumnVector>::new();
+
+        for layer_index in layers_in_from_last_to_1th {
+            let (mut weights_partials_matrix_avg, mut bias_partials_vector_avg) = per_tr_ex_data
+                .par_iter()
+                .map(|(intermediates, error_vectors)| {
+                    let prev_layer_activations_v =
+                        &intermediates.get(&(layer_index - 1)).unwrap().activation_v;
+
+                    let this_layer_err_v = error_vectors.get(&layer_index).unwrap();
+
+                    let weights_grad = this_layer_err_v.outer_product(&prev_layer_activations_v);
+
+                    let bias_grad = this_layer_err_v.clone();
+
+                    (weights_grad, bias_grad)
+                })
+                .reduce(
+                    || {
+                        (
+                            Matrix::new_zero_matrix(
+                                self.sizes[layer_index],
+                                self.sizes[layer_index - 1],
+                            ),
+                            ColumnVector::new_zero_vector(self.sizes[layer_index]),
+                        )
+                    },
+                    |(mut weights_acc, mut bias_acc), (weights_grad, bias_grad)| {
+                        weights_acc.add_mut(&weights_grad);
+                        bias_acc.add_mut(&bias_grad);
+                        (weights_acc, bias_acc)
+                    },
+                );
+
+            weights_partials_matrix_avg.div_scalar_mut(num_training_examples as f64);
+            bias_partials_vector_avg.div_scalar_mut(num_training_examples as f64);
+
+            weights_matricies.insert(layer_index, weights_partials_matrix_avg.clone());
+            bias_vectors.insert(layer_index, bias_partials_vector_avg.clone());
+        }
+
+        BigTheta {
+            sizes: self.sizes.clone(),
+            weights_matricies,
+            bias_vectors,
+        }
+    }
+
     pub fn train(
         &mut self,
         training_data: &Vec<NDTrainingDataPoint>,
@@ -848,9 +913,10 @@ impl SimpleNeuralNetwork {
             );
 
             // note: compute_gradients takes data for ALL training examples
+            // TODO: actually, I think this comment is wrong - I think it only takes in the data for all the training examples in the current mini batch
+            println!("computing gradients...");
             let mut t_compute_gradients = SimpleTimer::start_new("t_compute_gradients");
-
-            let mut gradients = self.compute_gradients_par_4(&per_tr_ex_data);
+            let mut gradients = self.compute_gradients_par_6(&per_tr_ex_data);
 
             t_compute_gradients.stop();
             println!(
@@ -1120,7 +1186,7 @@ impl SimpleNeuralNetwork {
 
                     if let Some(ref session_logger) = session_logger {
                         let epoch = epochs_count - 1;
-                        session_logger.write_update(
+                        _ = session_logger.write_update(
                             epoch,
                             epochs_count,
                             training_set_cost,
@@ -1209,7 +1275,7 @@ impl SimpleNeuralNetwork {
         let mut ptr: usize = 0;
 
         for l in 1..self.num_layers() {
-            let w_shape = self.get_weight_matrix_shape(l);
+            let w_shape = self.weight_matrix_shape(l);
             let w_data = &big_theta_v[ptr..(ptr + w_shape.data_length())];
             let w = Matrix::new_with_shape_and_values(&w_shape, w_data);
             ptr += w_shape.data_length();
@@ -1382,6 +1448,17 @@ mod tests {
                 ActivationFunction::Sigmoid,
             )
             .build()
+    }
+
+    #[test]
+    fn test_rev_layer_indexs_computation() {
+        let nn = get_simple_get_2_3_1_nn_for_test();
+
+        let layers_in_from_last_to_1th: Vec<usize> = (1..nn.num_layers()).rev().collect();
+
+        assert_eq!(layers_in_from_last_to_1th.len(), 2);
+        assert_eq!(layers_in_from_last_to_1th[0], 2);
+        assert_eq!(layers_in_from_last_to_1th[1], 1);
     }
 
     #[test]
@@ -2584,8 +2661,8 @@ mod tests {
     #[test]
     fn test_get_weight_matrix_shape() {
         let nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
-        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
-        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+        let weight_matrix_l1_shape = nn.weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.weight_matrix_shape(2);
         assert_eq!(weight_matrix_l1_shape.rows, 3);
         assert_eq!(weight_matrix_l1_shape.columns, 2);
         assert_eq!(weight_matrix_l2_shape.rows, 2);
@@ -2595,8 +2672,8 @@ mod tests {
     #[test]
     fn test_unroll_weights_and_biases() {
         let mut nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
-        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
-        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+        let weight_matrix_l1_shape = nn.weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.weight_matrix_shape(2);
 
         assert_eq!(weight_matrix_l1_shape, MatrixShape::new(3, 2));
         assert_eq!(weight_matrix_l2_shape, MatrixShape::new(2, 3));
@@ -2655,8 +2732,8 @@ mod tests {
     #[test]
     fn test_unroll_gradients() {
         let nn = SimpleNeuralNetwork::new(vec![2, 3, 2]);
-        let weight_matrix_l1_shape = nn.get_weight_matrix_shape(1);
-        let weight_matrix_l2_shape = nn.get_weight_matrix_shape(2);
+        let weight_matrix_l1_shape = nn.weight_matrix_shape(1);
+        let weight_matrix_l2_shape = nn.weight_matrix_shape(2);
 
         assert_eq!(weight_matrix_l1_shape, MatrixShape::new(3, 2));
         assert_eq!(weight_matrix_l2_shape, MatrixShape::new(2, 3));
