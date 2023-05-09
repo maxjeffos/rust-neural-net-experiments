@@ -1,13 +1,13 @@
 use activation::ActivationFunction;
 use metrics::SimpleTimer;
 
-use test6_nn::{CheckOptions, EarlyStopConfig, Optimizer};
+use test6_nn::{CheckOptions, EarlyStopConfig};
 
 use test6_nn::activation;
 use test6_nn::builder::NeuralNetworkBuilder;
 use test6_nn::initializer::Initializer;
+use test6_nn::optimizer::{AdamConfig, Optimizer};
 use test6_nn::training_log::TrainingSessionLogger;
-use test6_nn::AdamConfig;
 
 fn main() {
     println!("experimenting with training log stuff");
