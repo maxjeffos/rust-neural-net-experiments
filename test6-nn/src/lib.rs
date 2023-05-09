@@ -508,7 +508,7 @@ impl SimpleNeuralNetwork {
 
         BigTheta {
             sizes: self.sizes.clone(),
-            weights_matricies: bt_weights,
+            weights_matrices: bt_weights,
             bias_vectors: bt_biases,
         }
     }
@@ -524,11 +524,11 @@ impl SimpleNeuralNetwork {
         )>, // outer Vec is per training example
     ) -> BigTheta {
         // let mut gradients = HashMap::new();
-        // let mut weights_matricies = HashMap::<LayerIndex, Matrix>::new();
+        // let mut weights_matrices = HashMap::<LayerIndex, Matrix>::new();
         // let mut bias_vectors = HashMap::<LayerIndex, ColumnVector>::new();
 
-        // need to use a mutex to protect weights_matricies and bias_vectors
-        let weights_matricies = Arc::new(Mutex::new(Some(HashMap::<LayerIndex, Matrix>::new())));
+        // need to use a mutex to protect weights_matrices and bias_vectors
+        let weights_matrices = Arc::new(Mutex::new(Some(HashMap::<LayerIndex, Matrix>::new())));
         let bias_vectors = Arc::new(Mutex::new(Some(HashMap::<LayerIndex, ColumnVector>::new())));
 
         let num_training_examples = per_tr_ex_data.len();
@@ -591,12 +591,12 @@ impl SimpleNeuralNetwork {
                 let w = weights_partials_matrix_avg.take().unwrap();
                 let b = bias_partials_vector_avg.take().unwrap();
 
-                let mut weights_matricies_mutex_guard = weights_matricies.lock().unwrap();
-                weights_matricies_mutex_guard
+                let mut weights_matrices_mutex_guard = weights_matrices.lock().unwrap();
+                weights_matrices_mutex_guard
                     .as_mut()
                     .unwrap()
                     .insert(*layer_index, w);
-                drop(weights_matricies_mutex_guard); // drop the MutexGuard early to reduce lock time
+                drop(weights_matrices_mutex_guard); // drop the MutexGuard early to reduce lock time
 
                 let mut bias_vectors_mutex_guard = bias_vectors.lock().unwrap();
                 bias_vectors_mutex_guard
@@ -605,9 +605,9 @@ impl SimpleNeuralNetwork {
                     .insert(*layer_index, b);
             });
 
-        let mut weights_matricies_mutex_guard = weights_matricies.lock().unwrap();
-        let weights_matricies = weights_matricies_mutex_guard.take().unwrap();
-        drop(weights_matricies_mutex_guard);
+        let mut weights_matrices_mutex_guard = weights_matrices.lock().unwrap();
+        let weights_matrices = weights_matrices_mutex_guard.take().unwrap();
+        drop(weights_matrices_mutex_guard);
 
         let mut bias_vectors_mutex_guard = bias_vectors.lock().unwrap();
         let bias_vectors = bias_vectors_mutex_guard.take().unwrap();
@@ -615,7 +615,7 @@ impl SimpleNeuralNetwork {
 
         BigTheta {
             sizes: self.sizes.clone(),
-            weights_matricies,
+            weights_matrices,
             bias_vectors,
         }
     }
@@ -635,7 +635,7 @@ impl SimpleNeuralNetwork {
         // it is just testing the same code, it isn't testing a shared method - see `test_rev_layer_indexs_computation`.
         let layers_in_from_last_to_1th: Vec<usize> = (1..self.num_layers()).rev().collect();
 
-        let mut weights_matricies = HashMap::<LayerIndex, Matrix>::new();
+        let mut weights_matrices = HashMap::<LayerIndex, Matrix>::new();
         let mut bias_vectors = HashMap::<LayerIndex, ColumnVector>::new();
 
         for layer_index in layers_in_from_last_to_1th {
@@ -673,13 +673,13 @@ impl SimpleNeuralNetwork {
             weights_partials_matrix_avg.div_scalar_mut(num_training_examples as f64);
             bias_partials_vector_avg.div_scalar_mut(num_training_examples as f64);
 
-            weights_matricies.insert(layer_index, weights_partials_matrix_avg.clone());
+            weights_matrices.insert(layer_index, weights_partials_matrix_avg.clone());
             bias_vectors.insert(layer_index, bias_partials_vector_avg.clone());
         }
 
         BigTheta {
             sizes: self.sizes.clone(),
-            weights_matricies,
+            weights_matrices,
             bias_vectors,
         }
     }
