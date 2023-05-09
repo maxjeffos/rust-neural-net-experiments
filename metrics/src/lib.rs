@@ -179,6 +179,14 @@ impl MultiPointTimer {
         self.instances.last_mut().unwrap()
     }
 
+    pub fn start_instance(&mut self) -> &mut SimpleTimer {
+        let inst = SimpleTimer::new(&self.name);
+        self.instances.push(inst);
+        let the_instance = self.instances.last_mut().unwrap();
+        the_instance.start();
+        the_instance
+    }
+
     pub fn num_instances(&self) -> usize {
         self.instances.len()
     }
