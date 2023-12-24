@@ -6,7 +6,7 @@ pub fn quadratic_cost(
     desired_v: &ColumnVector,
     actual_v: &ColumnVector,
 ) -> Result<f64, VectorDimensionMismatch> {
-    // Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivitive function.
+    // Note that 3B1B does not do the divide by 2 and he ends up with a 2 in the derivative function.
     // Neilson does the divide by 2
     // I'm doing the divide by 2
 
