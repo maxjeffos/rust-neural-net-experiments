@@ -1,5 +1,4 @@
-use rand::distributions::{Distribution, Standard, Uniform};
-use rand::Rng;
+use rand::distributions::Distribution;
 use rand_distr::Normal;
 use std::fmt;
 
@@ -794,8 +793,8 @@ mod tests {
 
     #[test]
     fn minus_works() {
-        let mut m1 = old_column_vector_matrix![1.0, 2.0, 3.0];
-        let mut m2 = old_column_vector_matrix![1.0, 2.0, 3.0];
+        let m1 = old_column_vector_matrix![1.0, 2.0, 3.0];
+        let m2 = old_column_vector_matrix![1.0, 2.0, 3.0];
 
         let m = m1.minus(&m2);
 
@@ -962,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_divide_by_scalar() {
+    pub fn test_div_scalar() {
         let m = RowsMatrixBuilder::new()
             .with_row(&[1.0, 2.0, 3.0])
             .with_row(&[4.0, 5.0, 6.0])

@@ -93,6 +93,7 @@ impl TrainingSessionLogger {
             training_sessions_path
         };
 
+        // I think this code is screwy
         // make sure the directory exists and fail if it does not
         let p_exists = training_sessions_path.exists();
         if p_exists {

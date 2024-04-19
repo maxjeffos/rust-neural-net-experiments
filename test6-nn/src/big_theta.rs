@@ -1,20 +1,19 @@
 use common::linalg::{ColumnVector, Matrix, MatrixShape};
 use std::collections::HashMap;
 
+use crate::errors::{IndexOutOfBoundsError, InvalidLayerIndex, NeuralNetworkError};
 use crate::LayerIndex;
-
-// derive PartialEq
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BigTheta {
     pub sizes: Vec<usize>,
-    pub weights_matricies: HashMap<LayerIndex, Matrix>,
+    pub weights_matrices: HashMap<LayerIndex, Matrix>,
     pub bias_vectors: HashMap<LayerIndex, ColumnVector>,
 }
 
 impl BigTheta {
     pub fn zero_from_sizes(sizes: &[usize]) -> Self {
-        let mut weights_matricies = HashMap::new();
+        let mut weights_matrices = HashMap::new();
         let mut bias_vectors = HashMap::new();
 
         for layer_index in 1..sizes.len() {
@@ -22,19 +21,81 @@ impl BigTheta {
             let w_empty = Matrix::new_zero_matrix_with_shape(&m_shape);
             let b_empty = ColumnVector::new_zero_vector(sizes[layer_index]);
 
-            weights_matricies.insert(layer_index, w_empty);
+            weights_matrices.insert(layer_index, w_empty);
             bias_vectors.insert(layer_index, b_empty);
         }
 
         BigTheta {
             sizes: sizes.to_vec(),
-            weights_matricies,
+            weights_matrices,
             bias_vectors,
         }
     }
 
+    /// Returns a `Vec<f64>` containing the unrolled weights and biases of the neural network.
+    ///
+    /// The unrolled vector is constructed by concatenating the weights and biases of each layer
+    /// in the network, starting from layer 1. At each layer, the weights of a layer are included before its biases.
+    ///
+    pub fn unroll(&self) -> Vec<f64> {
+        let mut unrolled_vec = Vec::new();
+        for l in 1..self.sizes.len() {
+            let w = self.get_weights_matrix(&l);
+            let b = self.get_bias_vector(&l);
+
+            unrolled_vec.extend(w.data.as_slice());
+            unrolled_vec.extend(b.get_data_as_slice());
+        }
+        unrolled_vec
+    }
+
+    /// Returns a mutable reference to the `Matrix` representing the weights for the specified layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `layer_index` - A `LayerIndex` representing the index of the layer whose weights you want to access.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `NeuralNetworkError::InvalidLayerIndex` if the given `layer_index` is not valid - i.e. either than layer
+    /// doesn't exist, or it doesn't have an associated weights matrix.
+    ///
+    pub fn weights_at_layer_mut(
+        // TODO(dedupe): note that there's get_weights_matrix_mut below which is the same except that it uses unwrap
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut Matrix, NeuralNetworkError> {
+        self.weights_matrices
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::InvalidLayerIndex(InvalidLayerIndex(
+                layer_index,
+            )))
+    }
+
+    /// Returns a mutable reference to the `ColumnVector` representing the biases for the specified layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `layer_index` - A `LayerIndex` representing the index of the layer whose biases you want to access.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `NeuralNetworkError::InvalidLayerIndex` if the given `layer_index` is not valid - i.e. either than layer
+    /// doesn't exist, or it doesn't have an associated bias vector.
+    ///
+    pub fn bias_at_layer_mut(
+        &mut self,
+        layer_index: LayerIndex,
+    ) -> Result<&mut ColumnVector, NeuralNetworkError> {
+        self.bias_vectors
+            .get_mut(&layer_index)
+            .ok_or(NeuralNetworkError::IndexOutOfBoundsError(
+                IndexOutOfBoundsError(layer_index),
+            ))
+    }
+
     pub fn get_weights_matrix(&self, layer_index: &LayerIndex) -> &Matrix {
-        self.weights_matricies.get(layer_index).unwrap()
+        self.weights_matrices.get(layer_index).unwrap()
     }
 
     pub fn get_bias_vector(&self, layer_index: &LayerIndex) -> &ColumnVector {
@@ -42,7 +103,7 @@ impl BigTheta {
     }
 
     pub fn get_weights_matrix_mut(&mut self, layer_index: &LayerIndex) -> &mut Matrix {
-        self.weights_matricies.get_mut(layer_index).unwrap()
+        self.weights_matrices.get_mut(layer_index).unwrap()
     }
 
     pub fn get_bias_vector_mut(&mut self, layer_index: &LayerIndex) -> &mut ColumnVector {
@@ -50,12 +111,12 @@ impl BigTheta {
     }
 
     pub fn mult_scalar_in_place(&mut self, scalar: f64) {
-        for (_, w) in self.weights_matricies.iter_mut() {
-            w.multiply_by_scalar_in_place(scalar);
+        for (_, w) in self.weights_matrices.iter_mut() {
+            w.mult_scalar_mut(scalar);
         }
 
         for (_, b) in self.bias_vectors.iter_mut() {
-            b.multiply_by_scalar_in_place(scalar);
+            b.mult_scalar_mut(scalar);
         }
     }
 
@@ -66,12 +127,12 @@ impl BigTheta {
     }
 
     pub fn divide_scalar_in_place(&mut self, scalar: f64) {
-        for (_, w) in self.weights_matricies.iter_mut() {
-            w.divide_by_scalar_in_place(scalar);
+        for (_, w) in self.weights_matrices.iter_mut() {
+            w.div_scalar_mut(scalar);
         }
 
         for (_, b) in self.bias_vectors.iter_mut() {
-            b.divide_by_scalar_in_place(scalar);
+            b.div_scalar_mut(scalar);
         }
     }
 
@@ -82,32 +143,32 @@ impl BigTheta {
     }
 
     pub fn subtract_in_place(&mut self, other: &Self) {
-        for (layer_index, w) in self.weights_matricies.iter_mut() {
-            let other_w = other.weights_matricies.get(layer_index).unwrap();
-            w.subtract_in_place(other_w);
+        for (layer_index, w) in self.weights_matrices.iter_mut() {
+            let other_w = other.weights_matrices.get(layer_index).unwrap();
+            w.subtract_mut(other_w);
         }
 
         for (layer_index, b) in self.bias_vectors.iter_mut() {
             let other_b = other.bias_vectors.get(layer_index).unwrap();
-            b.minus_in_place(other_b);
+            b.subtract_mut(other_b);
         }
     }
 
     pub fn add_in_place(&mut self, other: &Self) {
-        for (layer_index, w) in self.weights_matricies.iter_mut() {
-            let other_w = other.weights_matricies.get(layer_index).unwrap();
-            w.add_in_place(other_w);
+        for (layer_index, w) in self.weights_matrices.iter_mut() {
+            let other_w = other.weights_matrices.get(layer_index).unwrap();
+            w.add_mut(other_w);
         }
 
         for (layer_index, b) in self.bias_vectors.iter_mut() {
             let other_b = other.bias_vectors.get(layer_index).unwrap();
-            b.plus_in_place(other_b);
+            b.add_mut(other_b);
         }
     }
 
     pub fn elementwise_mult_in_place(&mut self, other: &Self) {
-        for (layer_index, w) in self.weights_matricies.iter_mut() {
-            let other_w = other.weights_matricies.get(layer_index).unwrap();
+        for (layer_index, w) in self.weights_matrices.iter_mut() {
+            let other_w = other.weights_matrices.get(layer_index).unwrap();
             w.hadamard_product_in_place(other_w);
         }
 
@@ -118,8 +179,8 @@ impl BigTheta {
     }
 
     pub fn elementwise_divide_in_place(&mut self, other: &Self) {
-        for (layer_index, w) in self.weights_matricies.iter_mut() {
-            let other_w = other.weights_matricies.get(layer_index).unwrap();
+        for (layer_index, w) in self.weights_matrices.iter_mut() {
+            let other_w = other.weights_matrices.get(layer_index).unwrap();
             w.elementwise_divide_in_place(other_w);
         }
 
@@ -130,7 +191,7 @@ impl BigTheta {
     }
 
     pub fn add_scalar_to_each_element_in_place(&mut self, scalar: f64) {
-        for (_, w) in self.weights_matricies.iter_mut() {
+        for (_, w) in self.weights_matrices.iter_mut() {
             w.add_scalar_to_each_element_in_place(scalar);
         }
 
@@ -140,7 +201,7 @@ impl BigTheta {
     }
 
     pub fn elementwise_square_root_in_place(&mut self) {
-        for (_, w) in self.weights_matricies.iter_mut() {
+        for (_, w) in self.weights_matrices.iter_mut() {
             w.elementwise_square_root_in_place();
         }
 
@@ -161,7 +222,7 @@ mod tests {
         let mut next_value = 1.0;
 
         for layer_index in 1..big_theta.sizes.len() {
-            let w = big_theta.weights_matricies.get_mut(&layer_index).unwrap();
+            let w = big_theta.weights_matrices.get_mut(&layer_index).unwrap();
 
             for m in 0..w.num_rows() {
                 for n in 0..w.num_columns() {
@@ -185,7 +246,7 @@ mod tests {
         let mut next_value = 1.0;
 
         for layer_index in 1..big_theta.sizes.len() {
-            let w = big_theta.weights_matricies.get_mut(&layer_index).unwrap();
+            let w = big_theta.weights_matrices.get_mut(&layer_index).unwrap();
 
             for m in 0..w.num_rows() {
                 for n in 0..w.num_columns() {
@@ -209,7 +270,7 @@ mod tests {
         let mut next_value = 1.0;
 
         for layer_index in 1..big_theta.sizes.len() {
-            let w = big_theta.weights_matricies.get_mut(&layer_index).unwrap();
+            let w = big_theta.weights_matrices.get_mut(&layer_index).unwrap();
 
             for m in 0..w.num_rows() {
                 for n in 0..w.num_columns() {
@@ -234,16 +295,16 @@ mod tests {
         let big_theta = BigTheta::zero_from_sizes(&sizes);
 
         assert_eq!(big_theta.sizes, sizes);
-        assert_eq!(big_theta.weights_matricies.len(), 2);
+        assert_eq!(big_theta.weights_matrices.len(), 2);
         assert_eq!(big_theta.bias_vectors.len(), 2);
 
-        let w1 = big_theta.weights_matricies.get(&1).unwrap();
+        let w1 = big_theta.weights_matrices.get(&1).unwrap();
         let b1 = big_theta.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![0.0; 6]);
         assert_eq!(b1, &column_vector![0.0, 0.0, 0.0]);
 
-        let w2 = big_theta.weights_matricies.get(&2).unwrap();
+        let w2 = big_theta.weights_matrices.get(&2).unwrap();
         let b2 = big_theta.bias_vectors.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(1, 3));
         assert_eq!(&w2.data, &vec![0.0; 3]);
@@ -256,16 +317,16 @@ mod tests {
 
         let big_theta = create_big_theta_for_test(&sizes);
         assert_eq!(big_theta.sizes, sizes);
-        assert_eq!(big_theta.weights_matricies.len(), 2);
+        assert_eq!(big_theta.weights_matrices.len(), 2);
         assert_eq!(big_theta.bias_vectors.len(), 2);
 
-        let w1 = big_theta.weights_matricies.get(&1).unwrap();
+        let w1 = big_theta.weights_matrices.get(&1).unwrap();
         let b1 = big_theta.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         assert_eq!(b1, &column_vector![7.0, 8.0, 9.0]);
 
-        let w2 = big_theta.weights_matricies.get(&2).unwrap();
+        let w2 = big_theta.weights_matrices.get(&2).unwrap();
         let b2 = big_theta.bias_vectors.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(1, 3));
         assert_eq!(&w2.data, &vec![10.0, 11.0, 12.0]);
@@ -278,16 +339,16 @@ mod tests {
 
         let big_theta = create_big_theta_for_test_with_scale_factor(&sizes, 2.0);
         assert_eq!(big_theta.sizes, sizes);
-        assert_eq!(big_theta.weights_matricies.len(), 2);
+        assert_eq!(big_theta.weights_matrices.len(), 2);
         assert_eq!(big_theta.bias_vectors.len(), 2);
 
-        let w1 = big_theta.weights_matricies.get(&1).unwrap();
+        let w1 = big_theta.weights_matrices.get(&1).unwrap();
         let b1 = big_theta.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![2.0, 4.0, 6.0, 8.0, 10.0, 12.0]);
         assert_eq!(b1, &column_vector![14.0, 16.0, 18.0]);
 
-        let w2 = big_theta.weights_matricies.get(&2).unwrap();
+        let w2 = big_theta.weights_matrices.get(&2).unwrap();
         let b2 = big_theta.bias_vectors.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(1, 3));
         assert_eq!(&w2.data, &vec![20.0, 22.0, 24.0]);
@@ -341,13 +402,13 @@ mod tests {
 
         big_theta.divide_scalar_in_place(2.0);
 
-        let w1 = big_theta.weights_matricies.get(&1).unwrap();
+        let w1 = big_theta.weights_matrices.get(&1).unwrap();
         let b1 = big_theta.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![0.5, 1.0, 1.5, 2.0, 2.5, 3.0]);
         assert_eq!(b1, &column_vector![3.5, 4.0, 4.5]);
 
-        let w2 = big_theta.weights_matricies.get(&2).unwrap();
+        let w2 = big_theta.weights_matrices.get(&2).unwrap();
         let b2 = big_theta.bias_vectors.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(1, 3));
         assert_eq!(&w2.data, &vec![5.0, 5.5, 6.0]);
@@ -357,17 +418,17 @@ mod tests {
     #[test]
     fn test_divide_scalar_return_new_works() {
         let sizes = vec![2, 3, 1];
-        let mut big_theta = create_big_theta_for_test_with_scale_factor(&sizes, 2.0);
+        let big_theta = create_big_theta_for_test_with_scale_factor(&sizes, 2.0);
 
         let bt_new = big_theta.divide_scalar_return_new(2.0);
 
-        let w1 = bt_new.weights_matricies.get(&1).unwrap();
+        let w1 = bt_new.weights_matrices.get(&1).unwrap();
         let b1 = bt_new.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         assert_eq!(b1, &column_vector![7.0, 8.0, 9.0]);
 
-        let w2 = bt_new.weights_matricies.get(&2).unwrap();
+        let w2 = bt_new.weights_matrices.get(&2).unwrap();
         let b2 = bt_new.bias_vectors.get(&2).unwrap();
         assert_eq!(w2.shape(), MatrixShape::new(1, 3));
         assert_eq!(&w2.data, &vec![10.0, 11.0, 12.0]);
@@ -423,10 +484,10 @@ mod tests {
         let mut big_theta = BigTheta::zero_from_sizes(&sizes);
 
         assert_eq!(big_theta.sizes, sizes);
-        assert_eq!(big_theta.weights_matricies.len(), 2);
+        assert_eq!(big_theta.weights_matrices.len(), 2);
         assert_eq!(big_theta.bias_vectors.len(), 2);
 
-        let w1 = big_theta.weights_matricies.get(&1).unwrap();
+        let w1 = big_theta.weights_matrices.get(&1).unwrap();
         let b1 = big_theta.bias_vectors.get(&1).unwrap();
         assert_eq!(w1.shape(), MatrixShape::new(3, 2));
         assert_eq!(&w1.data, &vec![0.0; 6]);
