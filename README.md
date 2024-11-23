@@ -1,4 +1,4 @@
-# Rust Neural Network Implementation
+# Rust Neural Network Experiments
 
 A neural network implementation written from scratch in Rust, developed as a learning project to simultaneously explore deep learning concepts and Rust programming.
 
@@ -112,7 +112,7 @@ While the project's main educational goals have been met, potential areas for ex
 
 ## License
 
-WTFPL but if you get rich with this, feel free to throw me some cash (or equity is nice, too).
+MIT, but if you get rich with this, feel free to throw me some cash (or equity is nice, too).
 
 ---
 
