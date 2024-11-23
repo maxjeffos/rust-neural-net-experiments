@@ -9,4 +9,5 @@ members = [
   "test5-playing-with-matrix-ideas",
   "test6-nn",
   "mnist-data",
+  "test7-nn-mnist-classifier",
 ]

@@ -6,6 +6,7 @@ pub mod linalg;
 pub mod old_matrix;
 pub mod point;
 pub mod scalar_valued_multivariable_point;
+pub mod softmax;
 use rand::distributions::Distribution;
 use rand_distr::Normal;
 
