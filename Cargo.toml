@@ -2,10 +2,7 @@
 members = [
   "common",
   "metrics",
-  "test1-autodiff",
   "test2-mlp-classifier",
-  "test3-simple-linear-regression",
-  "test4-multivariable-regression",
   "test5-playing-with-matrix-ideas",
   "test6-nn",
   "mnist-data",
